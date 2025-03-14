@@ -27,7 +27,7 @@ class OnPolicyRunner:
         self.policy_cfg = train_cfg["policy"]
         self.device = device
         self.env = env
-
+        print(f"\n > OnPolicyRunner")
         # resolve dimensions of observations
         obs, extras = self.env.get_observations()
         num_obs = obs.shape[1]
@@ -35,6 +35,7 @@ class OnPolicyRunner:
             num_critic_obs = extras["observations"]["critic"].shape[1]
         else:
             num_critic_obs = num_obs
+        
         actor_critic_class = eval(self.policy_cfg.pop("class_name"))  # ActorCritic
         actor_critic: ActorCritic | ActorCriticRecurrent = actor_critic_class(
             num_obs, num_critic_obs, self.env.num_actions, **self.policy_cfg
