@@ -28,7 +28,6 @@ class OnPolicyRunnerRecurrentConv2d(OnPolicyRunner):
         self.device = device
         self.env = env
 
-        print(f"\n>> OnPolicyRunnerRecurrentConv2d")
         # Resolve dimensions of observations
         obs, extras = self.env.get_observations()
 
@@ -42,9 +41,8 @@ class OnPolicyRunnerRecurrentConv2d(OnPolicyRunner):
         num_image_obs = torch.prod(torch.tensor(input_image_shape)).item()
 
         # init the actor-critic networks
-        #! Edit inputs
         actor_critic: ActorCriticRecurrentConv2d = ActorCriticRecurrentConv2d(
-            num_proprio_obs, num_critic_proprio_obs, input_image_shape, self.env.num_actions, **self.policy_cfg
+            num_proprio_obs, num_critic_proprio_obs, self.env.num_actions, input_image_shape, **self.policy_cfg
         ).to(self.device)
 
         # init the ppo algorithm
@@ -146,17 +144,17 @@ class OnPolicyRunnerRecurrentConv2d(OnPolicyRunner):
             with torch.inference_mode():
                 for _ in range(self.num_steps_per_env):
                     # Sample actions from policy
-                    print(f"policy runner obs: {obs.shape}")
-                    print(f"policy runner critic_obs: {critic_obs.shape}")
                     actions = self.alg.act(obs, critic_obs)
                     # Step environment
                     obs, rewards, dones, infos = self.env.step(actions.to(self.env.device))
+                    # actions: [512, 13], rewards: [512], dones: [512], infos['time_outs']: [512]
                     obs_proprioceptive = obs["proprioception"]
                     image_obs = obs["vision"].permute(0, 3, 1, 2).flatten(start_dim=1)
+                    # obs_proprio: [512, 55], image_obs:[512, 30000]
 
                     # Move to the agent device
                     obs, image_obs, rewards, dones = obs_proprioceptive.to(self.device), image_obs.to(self.device), rewards.to(self.device), dones.to(self.device)
-
+                    
                     # Normalize observations
                     obs = self.obs_normalizer(obs)
                     # Extract critic observations and normalize
@@ -171,8 +169,6 @@ class OnPolicyRunnerRecurrentConv2d(OnPolicyRunner):
                     
                     obs = torch.cat([obs, image_obs], dim=1)
                     critic_obs = torch.cat([critic_obs, critic_image_obs], dim=1)
-                    print(f"Policy Runner obs2: {obs.shape}")
-                    print(f"Policy Runner critic_obs2: {critic_obs.shape}")
                     # Process env step and store in buffer
                     self.alg.process_env_step(rewards, dones, infos)
 
