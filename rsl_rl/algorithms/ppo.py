@@ -127,12 +127,10 @@ class PPO:
         self.actor_critic.train()
 
     def act(self, obs, critic_obs):
-        print(f"PPO-act: obs = {obs.shape}")
         if self.actor_critic.is_recurrent:
             self.transition.hidden_states = self.actor_critic.get_hidden_states()
         # Compute the actions and values
         self.transition.actions = self.actor_critic.act(obs).detach()
-        print(f"PPO-act: actions = {self.transition.actions.shape}")
         self.transition.values = self.actor_critic.evaluate(critic_obs).detach()
         self.transition.actions_log_prob = self.actor_critic.get_actions_log_prob(self.transition.actions).detach()
         self.transition.action_mean = self.actor_critic.action_mean.detach()
@@ -173,15 +171,12 @@ class PPO:
 
     def compute_returns(self, last_critic_obs):
         # compute value for the last step
-        print(f"PPO-compute_returns: last_critic_obs = {last_critic_obs.shape}")
         last_values = self.actor_critic.evaluate(last_critic_obs).detach()
-        print(f"PPO-compute_returns: last_values = {last_values.shape}")
         self.storage.compute_returns(
             last_values, self.gamma, self.lam, normalize_advantage=not self.normalize_advantage_per_mini_batch
         )
 
     def update(self):  # noqa: C901
-        print(f"PPO-update")
         mean_value_loss = 0
         mean_surrogate_loss = 0
         mean_entropy = 0
@@ -198,7 +193,6 @@ class PPO:
 
         # generator for mini batches
         if self.actor_critic.is_recurrent:
-            print("recurrent_mini_batch_generator")
             generator = self.storage.recurrent_mini_batch_generator(self.num_mini_batches, self.num_learning_epochs)
         else:
             generator = self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs)
@@ -218,8 +212,6 @@ class PPO:
             masks_batch,
             rnd_state_batch,
         ) in generator:
-            print(f"PPO-update: obs_batch = {obs_batch.shape}")
-            print(f"PPO-update: critic_obs_batch = {critic_obs_batch.shape}")
             # number of augmentations per sample
             # we start with 1 and increase it if we use symmetry augmentation
             num_aug = 1
