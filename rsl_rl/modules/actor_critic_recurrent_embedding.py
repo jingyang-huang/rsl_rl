@@ -17,18 +17,18 @@ class ActorCriticRecurrentEmbeddings(ActorCritic):
 
     def __init__(
         self,
-        num_actor_proprio_obs,
-        num_critic_proprio_obs,
-        num_privileged_obs,
-        num_actions,
-        actor_hidden_dims=[256, 256, 256],
-        critic_hidden_dims=[256, 256, 256],
-        embd_mlp_dims=[128,64,32],
-        activation="elu",
-        rnn_type="lstm",
-        rnn_hidden_size=256,
-        rnn_num_layers=1,
-        init_noise_std=1.0,
+        num_actor_proprio_obs: int,
+        num_critic_proprio_obs: int,
+        num_privileged_obs: int,
+        num_actions: int,
+        actor_hidden_dims: list[int] = [256, 256, 256],
+        critic_hidden_dims: list[int] = [256, 256, 256],
+        embd_mlp_dims: list[int] = [128, 64, 32],
+        activation: str = "elu",
+        rnn_type: str = "lstm",
+        rnn_hidden_size: int = 256,
+        rnn_num_layers: int = 1,
+        init_noise_std: float = 1.0,
         **kwargs,
     ):
         if kwargs:
@@ -69,6 +69,7 @@ class ActorCriticRecurrentEmbeddings(ActorCritic):
         print(f"Actor RNN: {self.rnn_a}")
         print(f"Critic RNN: {self.rnn_c}")
 
+
     def reset(self, dones=None):
         self.rnn_a.reset(dones)
         self.rnn_c.reset(dones)
@@ -85,15 +86,18 @@ class ActorCriticRecurrentEmbeddings(ActorCritic):
         input_a = self.rnn_a(concat_obs, masks, hidden_states)          # [1, B, 256] or [1, T*B, 256]
         return super().act(input_a.squeeze(0))
 
+
     def act_inference(self, observations):
-        proprio_obs = observations[..., :-self.num_privileged_obs]      # [B, 55] or [T, B, 55]
-        priv_obs = observations[..., -self.num_privileged_obs : ]       # [B, 4]  or [T, B, 4]
+        with torch.no_grad():
+            proprio_obs = observations[..., :-self.num_privileged_obs]      # [B, 55] or [T, B, 55]
+            priv_obs = observations[..., -self.num_privileged_obs : ]       # [B, 4]  or [T, B, 4]
 
-        embd_obs = self.priv_mlp(priv_obs)
-        concat_obs = torch.cat([embd_obs, proprio_obs], dim=-1)
+            embd_obs = self.priv_mlp(priv_obs)                
+            concat_obs = torch.cat([embd_obs, proprio_obs], dim=-1)
 
-        input_a = self.rnn_a(concat_obs)
-        return super().act_inference(input_a.squeeze(0))
+            input_a = self.rnn_a(concat_obs)
+            return super().act_inference(input_a.squeeze(0))
+
 
     def evaluate(self, critic_observations, masks=None, hidden_states=None):
         proprio_obs = critic_observations[..., :-self.num_privileged_obs]      # [B, 55] or [T, B, 55]
@@ -105,8 +109,10 @@ class ActorCriticRecurrentEmbeddings(ActorCritic):
         input_c = self.rnn_c(concat_obs, masks, hidden_states)
         return super().evaluate(input_c.squeeze(0))
 
+
     def get_hidden_states(self):
         return self.rnn_a.hidden_states, self.rnn_c.hidden_states
+
 
 
 class Memory(torch.nn.Module):
