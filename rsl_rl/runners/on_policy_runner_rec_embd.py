@@ -29,6 +29,9 @@ class OnPolicyRunnerRecurrentEmbeddings(OnPolicyRunner):
         self.device = device
         self.env = env
 
+        self.training_type = "rl"
+        # check if multi-gpu is enabled
+        self._configure_multi_gpu()
 
         # resolve dimensions of observations
         obs, extras = self.env.get_observations()
@@ -37,18 +40,28 @@ class OnPolicyRunnerRecurrentEmbeddings(OnPolicyRunner):
         num_privileged_obs = obs["privileged"].shape[1]
 
         if "critic" in extras["observations"]:
+            self.privileged_obs_type = "critic"  # actor-critic reinforcement learnig, e.g., PPO
+        else:
+            self.privileged_obs_type = None
+
+        if self.privileged_obs_type is not None:
             num_critic_proprio_obs = extras["observations"]["critic"].shape[1]
         else:
             num_critic_proprio_obs = num_proprio_obs
         
-        actor_critic: ActorCriticRecurrentEmbeddings = ActorCriticRecurrentEmbeddings(
+        policy: ActorCriticRecurrentEmbeddings = ActorCriticRecurrentEmbeddings(
+            num_proprio_obs, num_critic_proprio_obs, num_privileged_obs, self.env.num_actions, **self.policy_cfg
+        ).to(self.device)
+        # evaluate the policy class
+        policy_class = eval(self.policy_cfg.pop("class_name"))
+        policy: ActorCriticRecurrentEmbeddings = ActorCriticRecurrentEmbeddings(
             num_proprio_obs, num_critic_proprio_obs, num_privileged_obs, self.env.num_actions, **self.policy_cfg
         ).to(self.device)
 
         # init algorithm
         alg_class = eval(self.alg_cfg.pop("class_name"))  # PPO
-        self.alg: PPO = alg_class(actor_critic, device=self.device, **self.alg_cfg)
-
+        self.alg: PPO = alg_class(policy, device=self.device, **self.alg_cfg, multi_gpu_cfg=self.multi_gpu_cfg)
+        
         # store training configuration
         self.num_steps_per_env = self.cfg["num_steps_per_env"]
         self.save_interval = self.cfg["save_interval"]
@@ -62,6 +75,7 @@ class OnPolicyRunnerRecurrentEmbeddings(OnPolicyRunner):
             self.critic_obs_normalizer = torch.nn.Identity().to(self.device)  # no normalization
         # init storage and model
         self.alg.init_storage(
+            self.training_type,
             self.env.num_envs,
             self.num_steps_per_env,
             [num_proprio_obs + num_privileged_obs],
@@ -206,11 +220,10 @@ class OnPolicyRunnerRecurrentEmbeddings(OnPolicyRunner):
 
             # Update policy
             # Note: we keep arguments here since locals() loads them
-            mean_value_loss, mean_surrogate_loss, mean_entropy, mean_rnd_loss, mean_symmetry_loss = self.alg.update()
+            loss_dict = self.alg.update()
             stop = time.time()
             learn_time = stop - start
             self.current_learning_iteration = it
-
             # Logging info and save checkpoint
             if self.log_dir is not None:
                 # Log information
@@ -221,7 +234,6 @@ class OnPolicyRunnerRecurrentEmbeddings(OnPolicyRunner):
 
             # Clear episode infos
             ep_infos.clear()
-
             # Save code state
             if it == start_iter:
                 # obtain all the diff files
@@ -262,18 +274,13 @@ class OnPolicyRunnerRecurrentEmbeddings(OnPolicyRunner):
                 else:
                     self.writer.add_scalar("Episode/" + key, value, locs["it"])
                     ep_string += f"""{f'Mean episode {key}:':>{pad}} {value:.4f}\n"""
-        mean_std = self.alg.actor_critic.action_std.mean()
+        mean_std = self.alg.policy.action_std.mean()
         fps = int(self.num_steps_per_env * self.env.num_envs / (locs["collection_time"] + locs["learn_time"]))
 
         # -- Losses
-        self.writer.add_scalar("Loss/value_function", locs["mean_value_loss"], locs["it"])
-        self.writer.add_scalar("Loss/surrogate", locs["mean_surrogate_loss"], locs["it"])
-        self.writer.add_scalar("Loss/entropy", locs["mean_entropy"], locs["it"])
+        for key, value in locs["loss_dict"].items():
+            self.writer.add_scalar(f"Loss/{key}", value, locs["it"])
         self.writer.add_scalar("Loss/learning_rate", self.alg.learning_rate, locs["it"])
-        if self.alg.rnd:
-            self.writer.add_scalar("Loss/rnd", locs["mean_rnd_loss"], locs["it"])
-        if self.alg.symmetry:
-            self.writer.add_scalar("Loss/symmetry", locs["mean_symmetry_loss"], locs["it"])
 
         # -- Policy
         self.writer.add_scalar("Policy/mean_noise_std", mean_std.item(), locs["it"])
@@ -306,45 +313,31 @@ class OnPolicyRunnerRecurrentEmbeddings(OnPolicyRunner):
                 f"""{'#' * width}\n"""
                 f"""{str.center(width, ' ')}\n\n"""
                 f"""{'Computation:':>{pad}} {fps:.0f} steps/s (collection: {locs[
-                            'collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
-                f"""{'Value function loss:':>{pad}} {locs['mean_value_loss']:.4f}\n"""
-                f"""{'Surrogate loss:':>{pad}} {locs['mean_surrogate_loss']:.4f}\n"""
+                    'collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
+                f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n"""
             )
-
-            # -- For symmetry
-            if self.alg.symmetry:
-                log_string += f"""{'Symmetry loss:':>{pad}} {locs['mean_symmetry_loss']:.4f}\n"""
-
-            log_string += f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n"""
-
-            # -- For RND
+            # -- Losses
+            for key, value in locs["loss_dict"].items():
+                log_string += f"""{f'Mean {key} loss:':>{pad}} {value:.4f}\n"""
+            # -- Rewards
             if self.alg.rnd:
                 log_string += (
                     f"""{'Mean extrinsic reward:':>{pad}} {statistics.mean(locs['erewbuffer']):.2f}\n"""
                     f"""{'Mean intrinsic reward:':>{pad}} {statistics.mean(locs['irewbuffer']):.2f}\n"""
                 )
-
-            log_string += f"""{'Mean total reward:':>{pad}} {statistics.mean(locs['rewbuffer']):.2f}\n"""
+            log_string += f"""{'Mean reward:':>{pad}} {statistics.mean(locs['rewbuffer']):.2f}\n"""
+            # -- episode info
             log_string += f"""{'Mean episode length:':>{pad}} {statistics.mean(locs['lenbuffer']):.2f}\n"""
-            #   f"""{'Mean reward/step:':>{pad}} {locs['mean_reward']:.2f}\n"""
-            #   f"""{'Mean episode length/episode:':>{pad}} {locs['mean_trajectory_length']:.2f}\n""")
         else:
             log_string = (
                 f"""{'#' * width}\n"""
                 f"""{str.center(width, ' ')}\n\n"""
                 f"""{'Computation:':>{pad}} {fps:.0f} steps/s (collection: {locs[
-                            'collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
-                f"""{'Value function loss:':>{pad}} {locs['mean_value_loss']:.4f}\n"""
-                f"""{'Surrogate loss:':>{pad}} {locs['mean_surrogate_loss']:.4f}\n"""
+                    'collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
+                f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n"""
             )
-            # -- For symmetry
-            if self.alg.symmetry:
-                log_string += f"""{'Symmetry loss:':>{pad}} {locs['mean_symmetry_loss']:.4f}\n"""
-
-            log_string += f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n"""
-
-            #   f"""{'Mean reward/step:':>{pad}} {locs['mean_reward']:.2f}\n"""
-            #   f"""{'Mean episode length/episode:':>{pad}} {locs['mean_trajectory_length']:.2f}\n""")
+            for key, value in locs["loss_dict"].items():
+                log_string += f"""{f'{key}:':>{pad}} {value:.4f}\n"""
 
         log_string += ep_string
         log_string += (
@@ -360,13 +353,13 @@ class OnPolicyRunnerRecurrentEmbeddings(OnPolicyRunner):
     def save(self, path: str, infos=None):
         # -- Save PPO model
         saved_dict = {
-            "actor_embedding_model_state_dict": self.alg.actor_critic.priv_mlp.state_dict(),
-            "actor_model_state_dict": self.alg.actor_critic.actor.state_dict(),
-            "actor_rnn_model_state_dict": self.alg.actor_critic.rnn_a.state_dict(),
-            "critic_embedding_model_state_dict": self.alg.actor_critic.priv_mlp.state_dict(),
-            "critic_model_state_dict": self.alg.actor_critic.critic.state_dict(),
-            "critic_rnn_model_state_dict": self.alg.actor_critic.rnn_c.state_dict(),
-            "model_state_dict": self.alg.actor_critic.state_dict(),
+            "actor_embedding_model_state_dict": self.alg.policy.priv_mlp.state_dict(),
+            "actor_model_state_dict": self.alg.policy.actor.state_dict(),
+            "actor_rnn_model_state_dict": self.alg.policy.memory_a.state_dict(),
+            "critic_embedding_model_state_dict": self.alg.policy.priv_mlp.state_dict(),
+            "critic_model_state_dict": self.alg.policy.critic.state_dict(),
+            "critic_rnn_model_state_dict": self.alg.policy.memory_c.state_dict(),
+            "model_state_dict": self.alg.policy.state_dict(),
             "optimizer_state_dict": self.alg.optimizer.state_dict(),
             "iter": self.current_learning_iteration,
             "infos": infos,
@@ -404,24 +397,24 @@ class OnPolicyRunnerRecurrentEmbeddings(OnPolicyRunner):
         loaded_dict = torch.load(path, weights_only=False)
 
         if self.cfg["load_embeddings_model"]:
-            self.alg.actor_critic.priv_mlp.load_state_dict(loaded_dict["actor_embedding_model_state_dict"])
+            self.alg.policy.priv_mlp.load_state_dict(loaded_dict["actor_embedding_model_state_dict"])
         if self.cfg["load_policy_model"]:
-            self.alg.actor_critic.rnn_a.load_state_dict(loaded_dict["actor_rnn_model_state_dict"])
-            self.alg.actor_critic.rnn_c.load_state_dict(loaded_dict["critic_rnn_model_state_dict"])
-            self.alg.actor_critic.actor.load_state_dict(loaded_dict["actor_model_state_dict"])
-            self.alg.actor_critic.critic.load_state_dict(loaded_dict["critic_model_state_dict"])
+            self.alg.policy.memory_a.load_state_dict(loaded_dict["actor_rnn_model_state_dict"])
+            self.alg.policy.memory_c.load_state_dict(loaded_dict["critic_rnn_model_state_dict"])
+            self.alg.policy.actor.load_state_dict(loaded_dict["actor_model_state_dict"])
+            self.alg.policy.critic.load_state_dict(loaded_dict["critic_model_state_dict"])
 
         # Freeze weights
         if "freeze_embeddings_model" in self.cfg and self.cfg["freeze_embeddings_model"]:
             print("\n" + "--" * 50 + "\n[INFO]: Weights of embeddings model are frozen\n" + "--" * 50)
-            for param in self.alg.actor_critic.priv_mlp.parameters():
+            for param in self.alg.policy.priv_mlp.parameters():
                 param.requires_grad = False
 
         if "freeze_policy_model" in self.cfg and self.cfg["freeze_policy_model"]:
             print("\n" + "--" * 50 + "\n[INFO]: Weights of policy are frozen\n" + "--" * 50)
-            for param in self.alg.actor_critic.rnn_a.parameters():
+            for param in self.alg.policy.memory_a.parameters():
                 param.requires_grad = False
-            for param in self.alg.actor_critic.actor.parameters():
+            for param in self.alg.policy.actor.parameters():
                 param.requires_grad = False
 
         # -- Load RND model if used
@@ -438,7 +431,7 @@ class OnPolicyRunnerRecurrentEmbeddings(OnPolicyRunner):
             self.alg.optimizer.load_state_dict(loaded_dict["optimizer_state_dict"])
             
             # Get trainable parameters -> only these required gradient
-            trainable_params = [p for p in self.alg.actor_critic.parameters() if p.requires_grad]
+            trainable_params = [p for p in self.alg.policy.parameters() if p.requires_grad]
             
             # Create new optimizer with only trainable parameters
             old_optimizer = self.alg.optimizer
@@ -458,17 +451,17 @@ class OnPolicyRunnerRecurrentEmbeddings(OnPolicyRunner):
     def get_inference_policy(self, device=None):
         self.eval_mode()  # switch to evaluation mode (dropout for example)
         if device is not None:
-            self.alg.actor_critic.to(device)
-        policy = self.alg.actor_critic.act_inference
+            self.alg.policy.to(device)
+        policy = self.alg.policy.act_inference
         if self.cfg["empirical_normalization"]:
             if device is not None:
                 self.obs_normalizer.to(device)
-            policy = lambda x: self.alg.actor_critic.act_inference(self.obs_normalizer(x))  # noqa: E731
+            policy = lambda x: self.alg.policy.act_inference(self.obs_normalizer(x))  # noqa: E731
         return policy
 
     def train_mode(self):
         # -- PPO
-        self.alg.actor_critic.train()
+        self.alg.policy.train()
         # -- RND
         if self.alg.rnd:
             self.alg.rnd.train()
@@ -479,7 +472,7 @@ class OnPolicyRunnerRecurrentEmbeddings(OnPolicyRunner):
 
     def eval_mode(self):
         # -- PPO
-        self.alg.actor_critic.eval()
+        self.alg.policy.eval()
         # -- RND
         if self.alg.rnd:
             self.alg.rnd.eval()

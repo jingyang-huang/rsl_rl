@@ -268,7 +268,8 @@ class OnPolicyRunner:
                 self.log(locals())
                 # Save model
                 if it % self.save_interval == 0:
-                    self.save(os.path.join(self.log_dir, f"model_{it}.pt"))
+                    os.makedirs(os.path.join(self.log_dir, "models"), exist_ok=True)
+                    self.save(os.path.join(self.log_dir, "models", f"model_{it}.pt"))
 
             # Clear episode infos
             ep_infos.clear()
@@ -283,7 +284,8 @@ class OnPolicyRunner:
 
         # Save the final model after training
         if self.log_dir is not None and not self.disable_logs:
-            self.save(os.path.join(self.log_dir, f"model_{self.current_learning_iteration}.pt"))
+            os.makedirs(os.path.join(self.log_dir, "models"), exist_ok=True)
+            self.save(os.path.join(self.log_dir, "models", f"model_{self.current_learning_iteration}.pt"))
 
     def log(self, locs: dict, width: int = 80, pad: int = 35):
         # Compute the collection size

@@ -29,7 +29,7 @@ class PPO:
         num_mini_batches=1,
         clip_param=0.2,
         gamma=0.998,
-        lam=0.95,s
+        lam=0.95,
         value_loss_coef=1.0,
         entropy_coef=0.0,
         learning_rate=1e-3,
