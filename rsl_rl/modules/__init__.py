@@ -8,8 +8,8 @@
 from .actor_critic import ActorCritic
 from .actor_critic_conv2d import ActorCriticConv2d
 from .actor_critic_recurrent import ActorCriticRecurrent
-from .actor_critic_recurrent_embedding import ActorCriticRecurrentEmbeddings
 from .actor_critic_recurrent_conv2d import ActorCriticRecurrentConv2d
+from .actor_critic_recurrent_embedding import ActorCriticRecurrentEmbeddings
 from .normalizer import EmpiricalNormalization
 from .rnd import RandomNetworkDistillation
 from .student_teacher import StudentTeacher
@@ -18,6 +18,7 @@ from .student_teacher_recurrent import StudentTeacherRecurrent
 __all__ = [
     "ActorCritic",
     "ActorCriticRecurrent",
+    "ActorCriticConv2d",
     "EmpiricalNormalization",
     "RandomNetworkDistillation",
     "StudentTeacher",

@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import os
 import time
-import torch
 from collections import deque
+
+import torch
 
 import rsl_rl
 from rsl_rl.algorithms import PPO
@@ -37,7 +38,7 @@ class OnPolicyRunnerRecurrentConv2d(OnPolicyRunner):
         else:
             num_critic_proprio_obs = num_proprio_obs
         # Convert from [N, H, W, C] to [C, H, W]
-        input_image_shape = obs["vision"].permute(0, 3, 1, 2).shape[1:]
+        input_image_shape = obs["image"].permute(0, 3, 1, 2).shape[1:]
         num_image_obs = torch.prod(torch.tensor(input_image_shape)).item()
 
         # init the actor-critic networks
@@ -114,8 +115,8 @@ class OnPolicyRunnerRecurrentConv2d(OnPolicyRunner):
         proprio_obs = obs["proprioception"]
         # critic_obs = extras["observations"].get("critic", proprio_obs)
         proprio_critic_obs = extras["observations"].get("critic", {}).get("proprioception", proprio_obs)
-        image_obs = obs["vision"].permute(0, 3, 1, 2).flatten(start_dim=1)
-        critic_image_obs = extras["observations"].get("critic", {}).get("vision", obs["vision"]).permute(0, 3, 1, 2).flatten(start_dim=1)
+        image_obs = obs["image"].permute(0, 3, 1, 2).flatten(start_dim=1)
+        critic_image_obs = extras["observations"].get("critic", {}).get("image", obs["image"]).permute(0, 3, 1, 2).flatten(start_dim=1)
         
         obs = torch.cat([proprio_obs, image_obs], dim=1)
         critic_obs = torch.cat([proprio_critic_obs, critic_image_obs], dim=1)
@@ -149,7 +150,7 @@ class OnPolicyRunnerRecurrentConv2d(OnPolicyRunner):
                     obs, rewards, dones, infos = self.env.step(actions.to(self.env.device))
                     # actions: [512, 13], rewards: [512], dones: [512], infos['time_outs']: [512]
                     obs_proprioceptive = obs["proprioception"]
-                    image_obs = obs["vision"].permute(0, 3, 1, 2).flatten(start_dim=1)
+                    image_obs = obs["image"].permute(0, 3, 1, 2).flatten(start_dim=1)
                     # obs_proprio: [512, 55], image_obs:[512, 30000]
 
                     # Move to the agent device
@@ -160,7 +161,7 @@ class OnPolicyRunnerRecurrentConv2d(OnPolicyRunner):
                     # Extract critic observations and normalize
                     if "critic" in infos["observations"]:
                         # critic_obs = self.critic_obs_normalizer(infos["observations"]["critic"].to(self.device))
-                        critic_image_obs = extras["observations"].get("critic", {}).get("vision", obs["vision"]).permute(0, 3, 1, 2).flatten(start_dim=1)
+                        critic_image_obs = extras["observations"].get("critic", {}).get("image", obs["image"]).permute(0, 3, 1, 2).flatten(start_dim=1)
                     else:
                         critic_obs = obs
 

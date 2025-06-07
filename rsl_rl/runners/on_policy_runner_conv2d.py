@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import os
 import time
-import torch
 from collections import deque
+
+import torch
 
 import rsl_rl
 from rsl_rl.algorithms import PPO
@@ -27,6 +28,11 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
         self.policy_cfg = train_cfg["policy"]
         self.device = device
         self.env = env
+
+        # check if multi-gpu is enabled
+        # self._configure_multi_gpu()
+        # self.training_type = "rl"
+        
         obs, extras = self.env.get_observations()
 
         # num_obs = obs.shape[1]
@@ -40,8 +46,12 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
         else:
             num_critic_obs = num_obs
         # Convert from [N, H, W, C] to [C, H, W]
-        input_image_shape = obs["vision"].permute(0, 3, 1, 2).shape[1:]
+        input_image_shape = obs["image"].permute(0, 3, 1, 2).shape[1:]
         num_image_obs = torch.prod(torch.tensor(input_image_shape)).item()
+
+        # 
+        input_events_shape = obs["event"].shape[1:]
+
 
         # init the actor-critic networks
         actor_critic: ActorCriticConv2d = ActorCriticConv2d(
@@ -50,7 +60,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
 
         # init the ppo algorithm
         alg_class = eval(self.alg_cfg.pop("class_name"))  # PPO
-        self.alg: PPO = alg_class(actor_critic, device=self.device, **self.alg_cfg)
+        self.alg: PPO = alg_class(actor_critic, device=self.device, **self.alg_cfg) # actor critic 2d for ppo
         self.num_steps_per_env = self.cfg["num_steps_per_env"]
         self.save_interval = self.cfg["save_interval"]
         self.empirical_normalization = self.cfg["empirical_normalization"]
@@ -111,7 +121,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
         # start learning
         obs, extras = self.env.get_observations()
         critic_obs = extras["observations"].get("critic", obs["proprioception"])
-        image_obs = obs["vision"].permute(0, 3, 1, 2).flatten(start_dim=1)
+        image_obs = obs["image"].permute(0, 3, 1, 2).flatten(start_dim=1)
         proprioception_obs = obs["proprioception"]
         obs = torch.cat([proprioception_obs, image_obs], dim=1)
         critic_obs = torch.cat([critic_obs, image_obs], dim=1)
