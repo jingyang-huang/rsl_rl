@@ -30,7 +30,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
         self.env = env
 
         # check if multi-gpu is enabled
-        # self._configure_multi_gpu()
+        self._configure_multi_gpu()
         self.training_type = "rl"
 
         obs, extras = self.env.get_observations()
@@ -62,11 +62,33 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
             **self.policy_cfg,
         ).to(self.device)
 
+        # resolve dimension of rnd gated state
+        if "rnd_cfg" in self.alg_cfg and self.alg_cfg["rnd_cfg"] is not None:
+            # check if rnd gated state is present
+            rnd_state = extras["observations"].get("rnd_state")
+            if rnd_state is None:
+                raise ValueError(
+                    "Observations for the key 'rnd_state' not found in infos['observations']."
+                )
+            # get dimension of rnd gated state
+            num_rnd_state = rnd_state.shape[1]
+            # add rnd gated state to config
+            self.alg_cfg["rnd_cfg"]["num_states"] = num_rnd_state
+            # scale down the rnd weight with timestep (similar to how rewards are scaled down in legged_gym envs)
+            self.alg_cfg["rnd_cfg"]["weight"] *= env.unwrapped.step_dt
+
+        # if using symmetry then pass the environment config object
+        if "symmetry_cfg" in self.alg_cfg and self.alg_cfg["symmetry_cfg"] is not None:
+            # this is used by the symmetry function for handling different observation terms
+            self.alg_cfg["symmetry_cfg"]["_env"] = env
+
         # init the ppo algorithm
         alg_class = eval(self.alg_cfg.pop("class_name"))  # PPO
         self.alg: PPO = alg_class(
             actor_critic, device=self.device, **self.alg_cfg
         )  # actor critic 2d for ppo
+
+        # store training configuration
         self.num_steps_per_env = self.cfg["num_steps_per_env"]
         self.save_interval = self.cfg["save_interval"]
         self.empirical_normalization = self.cfg["empirical_normalization"]
@@ -95,7 +117,10 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
             [self.env.num_actions],
         )
 
-        # Log
+        # Decide whether to disable logging
+        # We only log from the process with rank 0 (main process)
+        self.disable_logs = self.is_distributed and self.gpu_global_rank != 0
+        # Logging
         self.log_dir = log_dir
         self.writer = None
         self.tot_timesteps = 0
@@ -105,7 +130,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
 
     def learn(self, num_learning_iterations: int, init_at_random_ep_len: bool = False):  # noqa: C901
         # initialize writer
-        if self.log_dir is not None and self.writer is None:
+        if self.log_dir is not None and self.writer is None and not self.disable_logs:
             # Launch either Tensorboard or Neptune & Tensorboard summary writer(s), default: Tensorboard.
             self.logger_type = self.cfg.get("logger", "tensorboard")
             self.logger_type = self.logger_type.lower()
@@ -145,11 +170,11 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
 
         # start learning
         obs, extras = self.env.get_observations()
-        critic_obs = extras["observations"].get("critic")
+        critic_obs = extras["observations"]["critic"]
         # image_obs = obs["image"].permute(0, 3, 1, 2).flatten(start_dim=1)
         events_obs = obs["events"].flatten(start_dim=1)
 
-        obs = torch.cat([events_obs , obs["last_act"]], dim=1) # obs["imu"]
+        obs = torch.cat([obs["last_act"], events_obs], dim=1)  # obs["imu"]
         critic_obs = torch.cat([critic_obs, events_obs], dim=1)
         obs, critic_obs = obs.to(self.device), critic_obs.to(self.device)
 
@@ -175,6 +200,13 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
             cur_ireward_sum = torch.zeros(
                 self.env.num_envs, dtype=torch.float, device=self.device
             )
+
+        # Ensure all parameters are in-synced
+        if self.is_distributed:
+            print(f"Synchronizing parameters for rank {self.gpu_global_rank}...")
+            self.alg.broadcast_parameters()
+            # TODO: Do we need to synchronize empirical normalizers?
+            #   Right now: No, because they all should converge to the same values "asymptotically".
 
         start_iter = self.current_learning_iteration
         tot_iter = start_iter + num_learning_iterations
@@ -267,14 +299,16 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
                 self.alg.compute_returns(critic_obs)
 
             # Update policy
-            # Note: we keep arguments here since locals() loads them
-            (
-                mean_value_loss,
-                mean_surrogate_loss,
-                mean_entropy,
-                mean_rnd_loss,
-                mean_symmetry_loss,
-            ) = self.alg.update()
+            # # Note: we keep arguments here since locals() loads them
+            # (
+            #     mean_value_loss,
+            #     mean_surrogate_loss,
+            #     mean_entropy,
+            #     mean_rnd_loss,
+            #     mean_symmetry_loss,
+            # ) = self.alg.update()
+            loss_dict = self.alg.update()
+            
             stop = time.time()
             learn_time = stop - start
             self.current_learning_iteration = it

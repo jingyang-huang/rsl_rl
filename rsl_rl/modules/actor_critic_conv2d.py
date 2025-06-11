@@ -221,9 +221,9 @@ class ConvolutionalNetwork(nn.Module):
 
         batch_size = image_obs.size(0)
         image = image_obs.view(batch_size, *self.image_input_shape)
-        print(f"forward: image_obs = {image_obs.shape}") # [512, 30000] - [3072, 30000]
-        print(f"forward: self.image_input_shape = {self.image_input_shape}") # [3, 100, 100]
-        print(f"forward: image = {image.shape}")    # [512, 3, 100, 100] - [3072, 3, 100, 100]
+        # print(f"forward: image_obs = {image_obs.shape}") # [512, 30000] - [3072, 30000]
+        # print(f"forward: self.image_input_shape = {self.image_input_shape}") # [3, 100, 100]
+        # print(f"forward: image = {image.shape}")    # [512, 3, 100, 100] - [3072, 3, 100, 100]
 
         conv_features = self.conv_net(image)
         flattened_conv_features = conv_features.view(batch_size, -1)
