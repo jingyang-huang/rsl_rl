@@ -49,7 +49,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
         input_image_shape = obs["image"].permute(0, 3, 1, 2).shape[1:]
         num_image_obs = torch.prod(torch.tensor(input_image_shape)).item()
 
-        # 
+        #   [N, 2, H, W]
         input_events_shape = obs["event"].shape[1:]
 
 
