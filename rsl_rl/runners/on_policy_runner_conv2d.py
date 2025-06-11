@@ -31,8 +31,8 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
 
         # check if multi-gpu is enabled
         # self._configure_multi_gpu()
-        # self.training_type = "rl"
-        
+        self.training_type = "rl"
+
         obs, extras = self.env.get_observations()
 
         # num_obs = obs.shape[1]
@@ -40,43 +40,58 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
         #     num_critic_obs = extras["observations"]["critic"].shape[1]
         # else:
         #     num_critic_obs = num_obs
-        num_obs = obs["proprioception"].shape[1]
+        num_obs = obs["last_act"].shape[1]  # proprioception , check dim right
         if "critic" in extras["observations"]:
             num_critic_obs = extras["observations"]["critic"].shape[1]
         else:
             num_critic_obs = num_obs
         # Convert from [N, H, W, C] to [C, H, W]
-        input_image_shape = obs["image"].permute(0, 3, 1, 2).shape[1:]
-        num_image_obs = torch.prod(torch.tensor(input_image_shape)).item()
+        # input_image_shape = obs["image"].permute(0, 3, 1, 2).shape[1:]
+        # num_image_obs = torch.prod(torch.tensor(input_image_shape)).item()
 
         #   [N, 2, H, W]
-        input_events_shape = obs["event"].shape[1:]
-
+        input_events_shape = obs["events"].shape[1:]
+        num_events_obs = torch.prod(torch.tensor(input_events_shape)).item()
 
         # init the actor-critic networks
         actor_critic: ActorCriticConv2d = ActorCriticConv2d(
-            num_obs, num_critic_obs, self.env.num_actions, input_image_shape, **self.policy_cfg
+            num_obs,
+            num_critic_obs,
+            self.env.num_actions,
+            input_events_shape,
+            **self.policy_cfg,
         ).to(self.device)
 
         # init the ppo algorithm
         alg_class = eval(self.alg_cfg.pop("class_name"))  # PPO
-        self.alg: PPO = alg_class(actor_critic, device=self.device, **self.alg_cfg) # actor critic 2d for ppo
+        self.alg: PPO = alg_class(
+            actor_critic, device=self.device, **self.alg_cfg
+        )  # actor critic 2d for ppo
         self.num_steps_per_env = self.cfg["num_steps_per_env"]
         self.save_interval = self.cfg["save_interval"]
         self.empirical_normalization = self.cfg["empirical_normalization"]
         if self.empirical_normalization:
-            self.obs_normalizer = EmpiricalNormalization(shape=[num_obs], until=1.0e8).to(self.device)
-            self.critic_obs_normalizer = EmpiricalNormalization(shape=[num_critic_obs], until=1.0e8).to(self.device)
+            self.obs_normalizer = EmpiricalNormalization(
+                shape=[num_obs], until=1.0e8
+            ).to(self.device)
+            self.critic_obs_normalizer = EmpiricalNormalization(
+                shape=[num_critic_obs], until=1.0e8
+            ).to(self.device)
         else:
-            self.obs_normalizer = torch.nn.Identity().to(self.device)  # no normalization
-            self.critic_obs_normalizer = torch.nn.Identity().to(self.device)  # no normalization
+            self.obs_normalizer = torch.nn.Identity().to(
+                self.device
+            )  # no normalization
+            self.critic_obs_normalizer = torch.nn.Identity().to(
+                self.device
+            )  # no normalization
 
         # init storage and model
         self.alg.init_storage(
+            self.training_type,
             self.env.num_envs,
             self.num_steps_per_env,
-            [num_obs + num_image_obs],
-            [num_critic_obs + num_image_obs],
+            [num_obs + num_events_obs],
+            [num_critic_obs + num_events_obs],
             [self.env.num_actions],
         )
 
@@ -98,19 +113,29 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
             if self.logger_type == "neptune":
                 from rsl_rl.utils.neptune_utils import NeptuneSummaryWriter
 
-                self.writer = NeptuneSummaryWriter(log_dir=self.log_dir, flush_secs=10, cfg=self.cfg)
-                self.writer.log_config(self.env.cfg, self.cfg, self.alg_cfg, self.policy_cfg)
+                self.writer = NeptuneSummaryWriter(
+                    log_dir=self.log_dir, flush_secs=10, cfg=self.cfg
+                )
+                self.writer.log_config(
+                    self.env.cfg, self.cfg, self.alg_cfg, self.policy_cfg
+                )
             elif self.logger_type == "wandb":
                 from rsl_rl.utils.wandb_utils import WandbSummaryWriter
 
-                self.writer = WandbSummaryWriter(log_dir=self.log_dir, flush_secs=10, cfg=self.cfg)
-                self.writer.log_config(self.env.cfg, self.cfg, self.alg_cfg, self.policy_cfg)
+                self.writer = WandbSummaryWriter(
+                    log_dir=self.log_dir, flush_secs=10, cfg=self.cfg
+                )
+                self.writer.log_config(
+                    self.env.cfg, self.cfg, self.alg_cfg, self.policy_cfg
+                )
             elif self.logger_type == "tensorboard":
                 from torch.utils.tensorboard import SummaryWriter
 
                 self.writer = SummaryWriter(log_dir=self.log_dir, flush_secs=10)
             else:
-                raise ValueError("Logger type not found. Please choose 'neptune', 'wandb' or 'tensorboard'.")
+                raise ValueError(
+                    "Logger type not found. Please choose 'neptune', 'wandb' or 'tensorboard'."
+                )
 
         # randomize initial episode lengths (for exploration)
         if init_at_random_ep_len:
@@ -120,11 +145,12 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
 
         # start learning
         obs, extras = self.env.get_observations()
-        critic_obs = extras["observations"].get("critic", obs["proprioception"])
-        image_obs = obs["image"].permute(0, 3, 1, 2).flatten(start_dim=1)
-        proprioception_obs = obs["proprioception"]
-        obs = torch.cat([proprioception_obs, image_obs], dim=1)
-        critic_obs = torch.cat([critic_obs, image_obs], dim=1)
+        critic_obs = extras["observations"].get("critic")
+        # image_obs = obs["image"].permute(0, 3, 1, 2).flatten(start_dim=1)
+        events_obs = obs["events"].flatten(start_dim=1)
+
+        obs = torch.cat([events_obs , obs["last_act"]], dim=1) # obs["imu"]
+        critic_obs = torch.cat([critic_obs, events_obs], dim=1)
         obs, critic_obs = obs.to(self.device), critic_obs.to(self.device)
 
         self.train_mode()  # switch to train mode (for dropout for example)
@@ -133,14 +159,22 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
         ep_infos = []
         rewbuffer = deque(maxlen=100)
         lenbuffer = deque(maxlen=100)
-        cur_reward_sum = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
-        cur_episode_length = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
+        cur_reward_sum = torch.zeros(
+            self.env.num_envs, dtype=torch.float, device=self.device
+        )
+        cur_episode_length = torch.zeros(
+            self.env.num_envs, dtype=torch.float, device=self.device
+        )
         # create buffers for logging extrinsic and intrinsic rewards
         if self.alg.rnd:
             erewbuffer = deque(maxlen=100)
             irewbuffer = deque(maxlen=100)
-            cur_ereward_sum = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
-            cur_ireward_sum = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
+            cur_ereward_sum = torch.zeros(
+                self.env.num_envs, dtype=torch.float, device=self.device
+            )
+            cur_ireward_sum = torch.zeros(
+                self.env.num_envs, dtype=torch.float, device=self.device
+            )
 
         start_iter = self.current_learning_iteration
         tot_iter = start_iter + num_learning_iterations
@@ -152,30 +186,41 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
                     # Sample actions from policy
                     actions = self.alg.act(obs, critic_obs)
                     # Step environment
-                    obs, rewards, dones, infos = self.env.step(actions.to(self.env.device))
-                    obs_proprioceptive = obs["proprioception"]
-                    
+                    obs, rewards, dones, infos = self.env.step(
+                        actions.to(self.env.device)
+                    )
+                    # obs_proprioceptive = obs["proprioception"]
+                    obs_proprioceptive = obs["last_act"]  # proprioception
+                    events_obs = obs["events"].flatten(start_dim=1)
                     # Move to the agent device
-                    obs, rewards, dones = obs_proprioceptive.to(self.device), rewards.to(self.device), dones.to(self.device)
+                    obs, rewards, dones = (
+                        obs_proprioceptive.to(self.device),
+                        rewards.to(self.device),
+                        dones.to(self.device),
+                    )
 
                     # Normalize observations
                     obs = self.obs_normalizer(obs)
                     # Extract critic observations and normalize
                     if "critic" in infos["observations"]:
-                        critic_obs = self.critic_obs_normalizer(infos["observations"]["critic"].to(self.device))
+                        critic_obs = self.critic_obs_normalizer(
+                            infos["observations"]["critic"].to(self.device)
+                        )
                     else:
                         critic_obs = obs
 
                     # Concatenate image observations with proprioceptive observations
-                    
-                    obs = torch.cat([obs, image_obs], dim=1)
-                    critic_obs = torch.cat([critic_obs, image_obs], dim=1)
+
+                    obs = torch.cat([obs, events_obs], dim=1)
+                    critic_obs = torch.cat([critic_obs, events_obs], dim=1)
 
                     # Process env step and store in buffer
                     self.alg.process_env_step(rewards, dones, infos)
 
                     # Intrinsic rewards (extracted here only for logging)!
-                    intrinsic_rewards = self.alg.intrinsic_rewards if self.alg.rnd else None
+                    intrinsic_rewards = (
+                        self.alg.intrinsic_rewards if self.alg.rnd else None
+                    )
 
                     if self.log_dir is not None:
                         # Book keeping
@@ -195,14 +240,22 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
                         # Clear data for completed episodes
                         # -- common
                         new_ids = (dones > 0).nonzero(as_tuple=False)
-                        rewbuffer.extend(cur_reward_sum[new_ids][:, 0].cpu().numpy().tolist())
-                        lenbuffer.extend(cur_episode_length[new_ids][:, 0].cpu().numpy().tolist())
+                        rewbuffer.extend(
+                            cur_reward_sum[new_ids][:, 0].cpu().numpy().tolist()
+                        )
+                        lenbuffer.extend(
+                            cur_episode_length[new_ids][:, 0].cpu().numpy().tolist()
+                        )
                         cur_reward_sum[new_ids] = 0
                         cur_episode_length[new_ids] = 0
                         # -- intrinsic and extrinsic rewards
                         if self.alg.rnd:
-                            erewbuffer.extend(cur_ereward_sum[new_ids][:, 0].cpu().numpy().tolist())
-                            irewbuffer.extend(cur_ireward_sum[new_ids][:, 0].cpu().numpy().tolist())
+                            erewbuffer.extend(
+                                cur_ereward_sum[new_ids][:, 0].cpu().numpy().tolist()
+                            )
+                            irewbuffer.extend(
+                                cur_ireward_sum[new_ids][:, 0].cpu().numpy().tolist()
+                            )
                             cur_ereward_sum[new_ids] = 0
                             cur_ireward_sum[new_ids] = 0
 
@@ -215,7 +268,13 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
 
             # Update policy
             # Note: we keep arguments here since locals() loads them
-            mean_value_loss, mean_surrogate_loss, mean_entropy, mean_rnd_loss, mean_symmetry_loss = self.alg.update()
+            (
+                mean_value_loss,
+                mean_surrogate_loss,
+                mean_entropy,
+                mean_rnd_loss,
+                mean_symmetry_loss,
+            ) = self.alg.update()
             stop = time.time()
             learn_time = stop - start
             self.current_learning_iteration = it
@@ -228,7 +287,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
                 if it % self.save_interval == 0:
                     if not os.path.exists(os.path.join(self.log_dir, "models")):
                         os.makedirs(os.path.join(self.log_dir, "models"))
-                    self.save(os.path.join(self.log_dir,"models", f"model_{it}.pt"))
+                    self.save(os.path.join(self.log_dir, "models", f"model_{it}.pt"))
 
             # Clear episode infos
             ep_infos.clear()
@@ -246,6 +305,10 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
         if self.log_dir is not None:
             if not os.path.exists(os.path.join(self.log_dir, "models")):
                 os.makedirs(os.path.join(self.log_dir, "models"))
-            self.save(os.path.join(self.log_dir, "models", f"model_{self.current_learning_iteration}.pt"))
-
-
+            self.save(
+                os.path.join(
+                    self.log_dir,
+                    "models",
+                    f"model_{self.current_learning_iteration}.pt",
+                )
+            )

@@ -12,3 +12,4 @@ __pycache__
 
 # vs code
 .vscode
+.history
