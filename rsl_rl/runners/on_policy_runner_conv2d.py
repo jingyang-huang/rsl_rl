@@ -46,19 +46,19 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
         else:
             num_critic_obs = num_obs
         # Convert from [N, H, W, C] to [C, H, W]
-        # input_image_shape = obs["image"].permute(0, 3, 1, 2).shape[1:]
-        # num_image_obs = torch.prod(torch.tensor(input_image_shape)).item()
+        input_image_shape = obs["rgb"].permute(0, 3, 1, 2).shape[1:]
+        num_image_obs = torch.prod(torch.tensor(input_image_shape)).item()
 
         #   [N, 2, H, W]
-        input_events_shape = obs["events"].shape[1:]
-        num_events_obs = torch.prod(torch.tensor(input_events_shape)).item()
+        # input_events_shape = obs["events"].shape[1:]
+        # num_events_obs = torch.prod(torch.tensor(input_events_shape)).item()
 
         # init the actor-critic networks
         actor_critic: ActorCriticConv2d = ActorCriticConv2d(
             num_obs,
             num_critic_obs,
             self.env.num_actions,
-            input_events_shape,
+            input_image_shape,
             **self.policy_cfg,
         ).to(self.device)
 
@@ -112,8 +112,8 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
             self.training_type,
             self.env.num_envs,
             self.num_steps_per_env,
-            [num_obs + num_events_obs],
-            [num_critic_obs + num_events_obs],
+            [num_obs + num_image_obs],
+            [num_critic_obs],
             [self.env.num_actions],
         )
 
@@ -171,12 +171,12 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
         # start learning
         obs, extras = self.env.get_observations()
         critic_obs = extras["observations"]["critic"]
-        # image_obs = obs["image"].permute(0, 3, 1, 2).flatten(start_dim=1)
-        events_obs = obs["events"].flatten(start_dim=1)
+        image_obs = obs["rgb"].permute(0, 3, 1, 2).flatten(start_dim=1)
+        # events_obs = obs["events"].flatten(start_dim=1)
 
-        obs = torch.cat([obs["last_act"], events_obs], dim=1)  # obs["imu"]
-        critic_obs = torch.cat([critic_obs, events_obs], dim=1)
-        obs, critic_obs = obs.to(self.device), critic_obs.to(self.device)
+        actor_obs = torch.cat([obs["last_act"], image_obs], dim=1)  # obs["imu"]
+        # critic_obs = torch.cat([critic_obs], dim=1)
+        actor_obs, critic_obs = actor_obs.to(self.device), critic_obs.to(self.device)
 
         self.train_mode()  # switch to train mode (for dropout for example)
 
@@ -216,14 +216,21 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
             with torch.inference_mode():
                 for _ in range(self.num_steps_per_env):
                     # Sample actions from policy
-                    actions = self.alg.act(obs, critic_obs)
+                    actions = self.alg.act(actor_obs, critic_obs)
                     # Step environment
                     obs, rewards, dones, infos = self.env.step(
                         actions.to(self.env.device)
                     )
                     # obs_proprioceptive = obs["proprioception"]
                     obs_proprioceptive = obs["last_act"]  # proprioception
-                    events_obs = obs["events"].flatten(start_dim=1)
+                    # events_obs = obs["events"].flatten(start_dim=1)
+                    image_obs = (
+                        obs["rgb"]
+                        .permute(0, 3, 1, 2)
+                        .flatten(start_dim=1)
+                        .to(self.device)
+                    )  # [N, C, H, W] -> [N, C*H*W]
+
                     # Move to the agent device
                     obs, rewards, dones = (
                         obs_proprioceptive.to(self.device),
@@ -243,8 +250,8 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
 
                     # Concatenate image observations with proprioceptive observations
 
-                    obs = torch.cat([obs, events_obs], dim=1)
-                    critic_obs = torch.cat([critic_obs, events_obs], dim=1)
+                    obs = torch.cat([obs, image_obs], dim=1)
+                    # critic_obs = torch.cat([critic_obs], dim=1)
 
                     # Process env step and store in buffer
                     self.alg.process_env_step(rewards, dones, infos)
@@ -308,7 +315,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
             #     mean_symmetry_loss,
             # ) = self.alg.update()
             loss_dict = self.alg.update()
-            
+
             stop = time.time()
             learn_time = stop - start
             self.current_learning_iteration = it
