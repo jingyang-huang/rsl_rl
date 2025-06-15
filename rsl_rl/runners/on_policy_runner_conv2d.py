@@ -170,13 +170,13 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
 
         # start learning
         obs, extras = self.env.get_observations()
-        critic_obs = extras["observations"]["critic"]
-        image_obs = obs["rgb"].permute(0, 3, 1, 2).flatten(start_dim=1)
+        critic_obs = extras["observations"]["critic"].to(self.device)
+        image_obs = obs["rgb"].permute(0, 3, 1, 2).flatten(start_dim=1).to(self.device)
         # events_obs = obs["events"].flatten(start_dim=1)
-
-        actor_obs = torch.cat([obs["last_act"], image_obs], dim=1)  # obs["imu"]
+        prop_obs = obs["last_act"].to(self.device)
+        actor_obs = torch.cat([prop_obs, image_obs], dim=1)  # obs["imu"]
         # critic_obs = torch.cat([critic_obs], dim=1)
-        actor_obs, critic_obs = actor_obs.to(self.device), critic_obs.to(self.device)
+        # actor_obs, critic_obs = actor_obs.to(self.device), critic_obs.to(self.device)
 
         self.train_mode()  # switch to train mode (for dropout for example)
 
@@ -221,36 +221,37 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
                     obs, rewards, dones, infos = self.env.step(
                         actions.to(self.env.device)
                     )
-                    # obs_proprioceptive = obs["proprioception"]
-                    obs_proprioceptive = obs["last_act"]  # proprioception
+                    # prop_obs = obs["proprioception"]
+                    prop_obs = obs["last_act"]  # proprioception
                     # events_obs = obs["events"].flatten(start_dim=1)
                     image_obs = (
                         obs["rgb"]
                         .permute(0, 3, 1, 2)
                         .flatten(start_dim=1)
                         .to(self.device)
-                    )  # [N, C, H, W] -> [N, C*H*W]
+                    )
+                    # [N, C, H, W] -> [N, C*H*W]
 
                     # Move to the agent device
-                    obs, rewards, dones = (
-                        obs_proprioceptive.to(self.device),
+                    prop_obs, rewards, dones = (
+                        prop_obs.to(self.device),
                         rewards.to(self.device),
                         dones.to(self.device),
                     )
 
                     # Normalize observations
-                    obs = self.obs_normalizer(obs)
+                    prop_obs = self.obs_normalizer(prop_obs)
                     # Extract critic observations and normalize
                     if "critic" in infos["observations"]:
                         critic_obs = self.critic_obs_normalizer(
                             infos["observations"]["critic"].to(self.device)
                         )
                     else:
-                        critic_obs = obs
+                        critic_obs = prop_obs
 
                     # Concatenate image observations with proprioceptive observations
 
-                    obs = torch.cat([obs, image_obs], dim=1)
+                    actor_obs = torch.cat([prop_obs, image_obs], dim=1)
                     # critic_obs = torch.cat([critic_obs], dim=1)
 
                     # Process env step and store in buffer
