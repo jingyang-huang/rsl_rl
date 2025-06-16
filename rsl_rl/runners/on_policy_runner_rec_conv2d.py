@@ -59,9 +59,11 @@ class OnPolicyRunnerRecurrentConv2d(OnPolicyRunner):
             **self.policy_cfg,
         ).to(self.device)
 
-        # init the ppo algorithm
-        alg_class = eval(self.alg_cfg.pop("class_name"))  # PPO
-        self.alg: PPO = alg_class(actor_critic, device=self.device, **self.alg_cfg)
+        # initialize algorithm
+        alg_class = eval(self.alg_cfg.pop("class_name"))
+        self.alg: PPO  = alg_class(
+            actor_critic, device=self.device, **self.alg_cfg, multi_gpu_cfg=self.multi_gpu_cfg
+        )
 
         # store training configuration
         self.num_steps_per_env = self.cfg["num_steps_per_env"]

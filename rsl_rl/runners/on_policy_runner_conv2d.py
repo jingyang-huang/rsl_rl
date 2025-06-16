@@ -88,11 +88,11 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
             # this is used by the symmetry function for handling different observation terms
             self.alg_cfg["symmetry_cfg"]["_env"] = env
 
-        # init the ppo algorithm
-        alg_class = eval(self.alg_cfg.pop("class_name"))  # PPO
-        self.alg: PPO = alg_class(
-            actor_critic, device=self.device, **self.alg_cfg
-        )  # actor critic 2d for ppo
+        # initialize algorithm
+        alg_class = eval(self.alg_cfg.pop("class_name"))
+        self.alg: PPO  = alg_class(
+            actor_critic, device=self.device, **self.alg_cfg, multi_gpu_cfg=self.multi_gpu_cfg
+        )
 
         # store training configuration
         self.num_steps_per_env = self.cfg["num_steps_per_env"]

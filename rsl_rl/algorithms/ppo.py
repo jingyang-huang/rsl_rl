@@ -380,6 +380,7 @@ class PPO:
 
             # Collect gradients from all GPUs
             if self.is_multi_gpu:
+                print("Reducing gradients across all GPUs...")
                 self.reduce_parameters()
 
             # Apply the gradients
@@ -459,7 +460,7 @@ class PPO:
         # Average the gradients across all GPUs
         torch.distributed.all_reduce(all_grads, op=torch.distributed.ReduceOp.SUM)
         all_grads /= self.gpu_world_size
-
+        # print(f"all grads shape: {all_grads.shape}, dtype: {all_grads.dtype}, device: {all_grads.device}")
         # Get all parameters
         all_params = self.policy.parameters()
         if self.rnd:
