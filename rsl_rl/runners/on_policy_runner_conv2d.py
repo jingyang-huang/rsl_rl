@@ -16,7 +16,8 @@ from rsl_rl.algorithms import PPO
 from rsl_rl.env import VecEnv
 from rsl_rl.modules import (
     ActorCriticConv2d,
-    #ActorCriticRecurrentConv2d,
+    # ActorCriticRecurrentConv2d,
+    # ActorCriticRecurrentConv2d,
     EmpiricalNormalization,
 )
 from rsl_rl.runners import OnPolicyRunner
@@ -39,18 +40,15 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
 
         obs, extras = self.env.get_observations()
 
-        # num_obs = obs.shape[1]
-        # if "critic" in extras["observations"]:
-        #     num_critic_obs = extras["observations"]["critic"].shape[1]
-        # else:
-        #     num_critic_obs = num_obs
-        num_prio_obs = obs["last_act"].shape[1]  # proprioception , check dim right
+        # num_proprio_obs = obs["proprioception"].shape[1]
+        history_length = obs["proprioception"].shape[1]
+        num_prio_obs = obs["proprioception"].shape[2]
         if "critic" in extras["observations"]:
             num_critic_obs = extras["observations"]["critic"].shape[1]
         else:
             num_critic_obs = num_prio_obs
         # Convert from [N, H, W, C] to [C, H, W]
-        input_image_shape = obs["rgb"].permute(0, 3, 1, 2).shape[1:]
+        input_image_shape = obs["rgb"].permute(0, 1, 4, 2, 3).shape[2:]
         num_image_obs = torch.prod(torch.tensor(input_image_shape)).item()
 
         #   [N, 2, H, W]
@@ -65,6 +63,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
             num_critic_obs,
             self.env.num_actions,
             input_image_shape,
+            history_length,
             **self.policy_cfg,
         ).to(self.device)
 
@@ -90,14 +89,19 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
 
         # initialize algorithm
         alg_class = eval(self.alg_cfg.pop("class_name"))
-        self.alg: PPO  = alg_class(
-            actor_critic, device=self.device, **self.alg_cfg, multi_gpu_cfg=self.multi_gpu_cfg
+        self.alg: PPO = alg_class(
+            actor_critic,
+            device=self.device,
+            **self.alg_cfg,
+            multi_gpu_cfg=self.multi_gpu_cfg,
         )
 
         # store training configuration
         self.num_steps_per_env = self.cfg["num_steps_per_env"]
         self.save_interval = self.cfg["save_interval"]
         self.empirical_normalization = self.cfg["empirical_normalization"]
+
+        # Image is normalized manually
         if self.empirical_normalization:
             self.obs_normalizer = EmpiricalNormalization(
                 shape=[num_prio_obs], until=1.0e8
@@ -118,7 +122,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
             self.training_type,
             self.env.num_envs,
             self.num_steps_per_env,
-            [num_prio_obs + num_image_obs],
+            [history_length * (num_prio_obs + num_image_obs)],
             [num_critic_obs],
             [self.env.num_actions],
         )
@@ -126,7 +130,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
         # Decide whether to disable logging
         # We only log from the process with rank 0 (main process)
         self.disable_logs = self.is_distributed and self.gpu_global_rank != 0
-        # Logging
+        # Log
         self.log_dir = log_dir
         self.writer = None
         self.tot_timesteps = 0
@@ -136,7 +140,9 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
 
     def learn(self, num_learning_iterations: int, init_at_random_ep_len: bool = False):  # noqa: C901
         # initialize writer
-        if self.log_dir is not None and self.writer is None and not self.disable_logs:
+        if (
+            self.log_dir is not None and self.writer is None and not self.disable_logs
+        ):  # for other processes (rank 1- N).
             # Launch either Tensorboard or Neptune & Tensorboard summary writer(s), default: Tensorboard.
             self.logger_type = self.cfg.get("logger", "tensorboard")
             self.logger_type = self.logger_type.lower()
@@ -177,11 +183,17 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
         # start learning
         obs, extras = self.env.get_observations()
         critic_obs = extras["observations"]["critic"].to(self.device)
-        image_obs = obs["rgb"].permute(0, 3, 1, 2).flatten(start_dim=1).to(self.device)
+        image_obs = (
+            obs["rgb"].permute(0, 1, 4, 2, 3).flatten(start_dim=1).to(self.device)
+        ) # [B , ]
+        prop_obs = obs["proprioception"].flatten(start_dim=1).to(self.device)
+        # batch_size = obs["proprioception"].shape[0]
+        # history_length = obs["proprioception"].shape[1]
+        # input_image_shape = obs["rgb"].shape[2:]
+        # test_view_img_obs = image_obs.view(batch_size , history_length, *input_image_shape)
         # events_obs = obs["events"].flatten(start_dim=1)
-        prop_obs = obs["last_act"].to(self.device)  # obs["imu"]
         actor_obs = torch.cat([prop_obs, image_obs], dim=1)
-        # critic_obs = torch.cat([critic_obs], dim=1)
+        # critic_obs = torch.cat([critic_obs,image_obs], dim=1)
         # actor_obs, critic_obs = actor_obs.to(self.device), critic_obs.to(self.device)
 
         self.train_mode()  # switch to train mode (for dropout for example)
@@ -227,24 +239,22 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
                     obs, rewards, dones, infos = self.env.step(
                         actions.to(self.env.device)
                     )
+
                     # prop_obs = obs["proprioception"]
-                    prop_obs = obs["last_act"]  # proprioception
+                    prop_obs = obs["proprioception"].flatten(start_dim=1).to(self.device) # proprioception
                     # events_obs = obs["events"].flatten(start_dim=1)
                     image_obs = (
-                        obs["rgb"]
-                        .permute(0, 3, 1, 2)
-                        .flatten(start_dim=1)
-                        .to(self.device)
+                        obs["rgb"].permute(0, 1, 4, 2, 3).flatten(start_dim=1).to(self.device)
                     )
-                    # [N, C, H, W] -> [N, C*H*W]
-
+                    # [N, C, H, W] -> [N, S*C*H*W]
+        
                     # Move to the agent device
                     prop_obs, rewards, dones = (
                         prop_obs.to(self.device),
                         rewards.to(self.device),
                         dones.to(self.device),
                     )
-
+    
                     # Normalize observations
                     prop_obs = self.obs_normalizer(prop_obs)
                     # Extract critic observations and normalize
@@ -258,7 +268,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
                     # Concatenate image observations with proprioceptive observations
 
                     actor_obs = torch.cat([prop_obs, image_obs], dim=1)
-                    # critic_obs = torch.cat([critic_obs], dim=1)
+                    # critic_obs = torch.cat([critic_obs, image_obs], dim=1)
 
                     # Process env step and store in buffer
                     self.alg.process_env_step(rewards, dones, infos)
@@ -313,6 +323,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
                 self.alg.compute_returns(critic_obs)
 
             # Update policy
+            # Update policy
             # # Note: we keep arguments here since locals() loads them
             # (
             #     mean_value_loss,
@@ -328,7 +339,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
             self.current_learning_iteration = it
 
             # Logging info and save checkpoint
-            if self.log_dir is not None:
+            if self.log_dir is not None and not self.disable_logs:
                 # Log information
                 self.log(locals())
                 # Save model
@@ -341,7 +352,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
             ep_infos.clear()
 
             # Save code state
-            if it == start_iter:
+            if it == start_iter and not self.disable_logs:
                 # obtain all the diff files
                 git_file_paths = store_code_state(self.log_dir, self.git_status_repos)
                 # if possible store them to wandb
@@ -350,7 +361,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
                         self.writer.save_file(path)
 
         # Save the final model after training
-        if self.log_dir is not None:
+        if self.log_dir is not None and not self.disable_logs:
             if not os.path.exists(os.path.join(self.log_dir, "models")):
                 os.makedirs(os.path.join(self.log_dir, "models"))
             self.save(

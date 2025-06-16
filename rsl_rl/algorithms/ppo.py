@@ -5,10 +5,11 @@
 
 from __future__ import annotations
 
+from itertools import chain
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from itertools import chain
 
 from rsl_rl.modules import ActorCritic, ActorCriticRecurrentEmbeddings
 from rsl_rl.modules.rnd import RandomNetworkDistillation
@@ -145,7 +146,8 @@ class PPO:
         self.transition.action_mean = self.policy.action_mean.detach()
         self.transition.action_sigma = self.policy.action_std.detach()
         # need to record obs and critic_obs before env.step()
-        self.transition.observations = obs
+        batch_size = obs.shape[0]
+        self.transition.observations = obs.view(batch_size,-1)
         self.transition.privileged_observations = critic_obs
         return self.transition.actions
 
@@ -380,7 +382,7 @@ class PPO:
 
             # Collect gradients from all GPUs
             if self.is_multi_gpu:
-                print("Reducing gradients across all GPUs...")
+                # print("Reducing gradients across all GPUs...")
                 self.reduce_parameters()
 
             # Apply the gradients

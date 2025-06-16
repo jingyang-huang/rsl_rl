@@ -19,6 +19,7 @@ class ActorCriticConv2d(nn.Module):
         num_critic_obs,
         num_actions,
         image_input_shape,
+        history_length,
         conv_layers_params,
         conv_linear_output_size,
         actor_hidden_dims,
@@ -37,6 +38,7 @@ class ActorCriticConv2d(nn.Module):
             proprio_input_dim=num_actor_obs,
             output_dim=num_actions,
             image_input_shape=image_input_shape,
+            history_length=history_length,
             conv_layers_params=conv_layers_params,
             hidden_dims=actor_hidden_dims,
             activation_fn=self.activation_fn,
@@ -53,7 +55,7 @@ class ActorCriticConv2d(nn.Module):
         #     conv_linear_output_size=conv_linear_output_size,
         # )
 
-         # Value function
+        # Value function
         critic_layers = []
         critic_layers.append(nn.Linear(num_critic_obs, critic_hidden_dims[0]))
         critic_layers.append(self.activation_fn)
@@ -61,10 +63,14 @@ class ActorCriticConv2d(nn.Module):
             if layer_index == len(critic_hidden_dims) - 1:
                 critic_layers.append(nn.Linear(critic_hidden_dims[layer_index], 1))
             else:
-                critic_layers.append(nn.Linear(critic_hidden_dims[layer_index], critic_hidden_dims[layer_index + 1]))
+                critic_layers.append(
+                    nn.Linear(
+                        critic_hidden_dims[layer_index],
+                        critic_hidden_dims[layer_index + 1],
+                    )
+                )
                 critic_layers.append(self.activation_fn)
         self.critic = nn.Sequential(*critic_layers)
-
 
         print(f"Modified Actor Network: {self.actor}")
         print(f"Modified Critic Network: {self.critic}")
@@ -74,9 +80,13 @@ class ActorCriticConv2d(nn.Module):
         if self.noise_std_type == "scalar":
             self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
         elif self.noise_std_type == "log":
-            self.log_std = nn.Parameter(torch.log(init_noise_std * torch.ones(num_actions)))
+            self.log_std = nn.Parameter(
+                torch.log(init_noise_std * torch.ones(num_actions))
+            )
         else:
-            raise ValueError(f"Unknown standard deviation type: {self.noise_std_type}. Should be 'scalar' or 'log'")
+            raise ValueError(
+                f"Unknown standard deviation type: {self.noise_std_type}. Should be 'scalar' or 'log'"
+            )
 
         # Action distribution (populated in update_distribution)
         self.distribution = None
@@ -110,7 +120,9 @@ class ActorCriticConv2d(nn.Module):
         elif self.noise_std_type == "log":
             std = torch.exp(self.log_std).expand_as(mean)
         else:
-            raise ValueError(f"Unknown standard deviation type: {self.noise_std_type}. Should be 'scalar' or 'log'")
+            raise ValueError(
+                f"Unknown standard deviation type: {self.noise_std_type}. Should be 'scalar' or 'log'"
+            )
         # create distribution
         self.distribution = Normal(mean, std)
 
@@ -128,7 +140,7 @@ class ActorCriticConv2d(nn.Module):
     def evaluate(self, critic_observations, **kwargs):
         value = self.critic(critic_observations)
         return value
-    
+
     def load_state_dict(self, state_dict, strict=True):
         """Load the parameters of the actor-critic model.
 
@@ -173,6 +185,7 @@ class ConvolutionalNetwork(nn.Module):
         proprio_input_dim,
         output_dim,
         image_input_shape,
+        history_length,
         conv_layers_params,
         hidden_dims,
         activation_fn,
@@ -181,8 +194,11 @@ class ConvolutionalNetwork(nn.Module):
         super().__init__()
 
         self.image_input_shape = image_input_shape  # (C, H, W)
-        self.image_obs_size = torch.prod(torch.tensor(self.image_input_shape)).item()
-        self.proprio_obs_size = proprio_input_dim
+        self.history_length = history_length
+        self.image_obs_size = (
+            self.history_length * torch.prod(torch.tensor(self.image_input_shape)).item()
+        )
+        self.proprio_obs_size =  self.history_length * proprio_input_dim
         self.input_dim = self.proprio_obs_size + self.image_obs_size
         self.activation_fn = activation_fn
 
@@ -190,7 +206,7 @@ class ConvolutionalNetwork(nn.Module):
         self.conv_net = self.build_conv_net(conv_layers_params)
         with torch.no_grad():
             dummy_image = torch.zeros(1, *self.image_input_shape)
-            conv_output = self.conv_net(dummy_image)            
+            conv_output = self.conv_net(dummy_image)
             self.image_feature_size = conv_output.view(1, -1).shape[1]
 
         # Build the connection layers between conv net and mlp -> flattened into 1D vector
@@ -199,7 +215,7 @@ class ConvolutionalNetwork(nn.Module):
 
         # Build the mlp
         self.mlp = nn.Sequential(
-            nn.Linear(self.proprio_obs_size + conv_linear_output_size, hidden_dims[0]),
+            nn.Linear(self.proprio_obs_size + history_length * conv_linear_output_size, hidden_dims[0]),
             self.activation_fn,
             *[
                 layer
@@ -216,18 +232,20 @@ class ConvolutionalNetwork(nn.Module):
         layers = []
         in_channels = self.image_input_shape[0]
         for idx, params in enumerate(conv_layers_params[:-1]):
-            layers.extend([
-                nn.Conv2d(
-                    in_channels,
-                    params["out_channels"],
-                    kernel_size=params.get("kernel_size", 3),
-                    stride=params.get("stride", 1),
-                    padding=params.get("padding", 0),
-                ),
-                nn.BatchNorm2d(params["out_channels"]),
-                nn.ReLU(inplace=True),
-                ResidualBlock(params["out_channels"]) if idx > 0 else nn.Identity(),
-            ])
+            layers.extend(
+                [
+                    nn.Conv2d(
+                        in_channels,
+                        params["out_channels"],
+                        kernel_size=params.get("kernel_size", 3),
+                        stride=params.get("stride", 1),
+                        padding=params.get("padding", 0),
+                    ),
+                    nn.BatchNorm2d(params["out_channels"]),
+                    nn.ReLU(inplace=True),
+                    ResidualBlock(params["out_channels"]) if idx > 0 else nn.Identity(),
+                ]
+            )
             in_channels = params["out_channels"]
         last_params = conv_layers_params[-1]
         layers.append(
@@ -250,7 +268,9 @@ class ConvolutionalNetwork(nn.Module):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
 
-        nn.init.kaiming_normal_(self.conv_linear.weight, mode="fan_out", nonlinearity="tanh")
+        nn.init.kaiming_normal_(
+            self.conv_linear.weight, mode="fan_out", nonlinearity="tanh"
+        )
         nn.init.constant_(self.conv_linear.bias, 0)
         nn.init.constant_(self.layernorm.weight, 1.0)
         nn.init.constant_(self.layernorm.bias, 0.0)
@@ -260,19 +280,45 @@ class ConvolutionalNetwork(nn.Module):
                 nn.init.orthogonal_(layer.weight, gain=0.01)
                 nn.init.zeros_(layer.bias) if layer.bias is not None else None
 
-    def forward(self, observations): # observations (batch_size, 4 + 230400 = 640*480)
-        proprio_obs = observations[:, : -self.image_obs_size] # proprio_obs (batch_size, 4)
-        image_obs = observations[:, -self.image_obs_size :] # image_obs (batch_size, 230400 = 640*480)
+    def forward(self, observations):  # observations (batch_size, 4 + 230400 = 640*480)
+        proprio_obs = observations[
+            :,  : -self.image_obs_size
+        ]  # proprio_obs (batch_size, history_length, 4)
+        image_obs = observations[
+            :, -self.image_obs_size:
+        ]  # image_obs (batch_size, history_length, 230400 = 640*480)
 
         batch_size = image_obs.size(0)
-        image = image_obs.view(batch_size, *self.image_input_shape)
+        # image_buffer = image_obs.view(
+        #     batch_size, self.history_length, *self.image_input_shape
+        # )  
+        image = image_obs.contiguous().view(batch_size * self.history_length, *self.image_input_shape) # reshape to (b*s, c, w, h)
         # print(f"forward: image_obs = {image_obs.shape}") # [512, 30000] - [3072, 30000]
         # print(f"forward: self.image_input_shape = {self.image_input_shape}") # [3, 100, 100]
         # print(f"forward: image = {image.shape}")    # [512, 3, 100, 100] - [3072, 3, 100, 100]
 
         conv_features = self.conv_net(image)
-        flattened_conv_features = conv_features.view(batch_size, -1)
-        normalized_conv_output = self.layernorm(self.conv_linear(flattened_conv_features))
-        combined_input = torch.cat([proprio_obs, normalized_conv_output], dim=1)
+        flattened_conv_features = conv_features.view(batch_size*self.history_length, -1)
+        normalized_conv_output = self.layernorm(
+            self.conv_linear(flattened_conv_features)
+        )
+        normalized_conv_flatten = normalized_conv_output.view(batch_size, -1)
+        proprio_obs_flatten = proprio_obs.view(batch_size, -1)
+        combined_input = torch.cat([proprio_obs_flatten, normalized_conv_flatten], dim=1)
         output = self.mlp(combined_input)
         return output
+
+    # def forward(self, observations: th.Tensor) -> th.Tensor:
+    #     # Preprocess
+    #     # t = time.time()
+    #     input_batch = self.preprocess(observations)
+
+    #     b, s, c, w, h = input_batch.shape
+    #     x0 = input_batch.view(-1, c, w, h) # reshape to (b*s, c, w, h) ， 这样保证 channel不变
+
+    #     x1 = self.resnet(x0)
+    #     x1 = x1.view(b, s, -1)
+    #     x2 = torch.flatten(x1, start_dim=1)
+    #     x3 = self.linear(x2)
+    #     # print("Time: ", time.time() - t, observations.shape)
+    #     return x3
