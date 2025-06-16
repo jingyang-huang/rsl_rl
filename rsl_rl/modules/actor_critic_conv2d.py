@@ -260,9 +260,9 @@ class ConvolutionalNetwork(nn.Module):
                 nn.init.orthogonal_(layer.weight, gain=0.01)
                 nn.init.zeros_(layer.bias) if layer.bias is not None else None
 
-    def forward(self, observations):
-        proprio_obs = observations[:, : -self.image_obs_size]
-        image_obs = observations[:, -self.image_obs_size :]
+    def forward(self, observations): # observations (batch_size, 4 + 230400 = 640*480)
+        proprio_obs = observations[:, : -self.image_obs_size] # proprio_obs (batch_size, 4)
+        image_obs = observations[:, -self.image_obs_size :] # image_obs (batch_size, 230400 = 640*480)
 
         batch_size = image_obs.size(0)
         image = image_obs.view(batch_size, *self.image_input_shape)

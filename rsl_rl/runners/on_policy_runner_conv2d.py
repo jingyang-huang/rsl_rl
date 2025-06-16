@@ -14,7 +14,11 @@ import torch
 import rsl_rl
 from rsl_rl.algorithms import PPO
 from rsl_rl.env import VecEnv
-from rsl_rl.modules import ActorCriticConv2d, EmpiricalNormalization
+from rsl_rl.modules import (
+    ActorCriticConv2d,
+    #ActorCriticRecurrentConv2d,
+    EmpiricalNormalization,
+)
 from rsl_rl.runners import OnPolicyRunner
 from rsl_rl.utils import store_code_state
 
@@ -40,11 +44,11 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
         #     num_critic_obs = extras["observations"]["critic"].shape[1]
         # else:
         #     num_critic_obs = num_obs
-        num_obs = obs["last_act"].shape[1]  # proprioception , check dim right
+        num_prio_obs = obs["last_act"].shape[1]  # proprioception , check dim right
         if "critic" in extras["observations"]:
             num_critic_obs = extras["observations"]["critic"].shape[1]
         else:
-            num_critic_obs = num_obs
+            num_critic_obs = num_prio_obs
         # Convert from [N, H, W, C] to [C, H, W]
         input_image_shape = obs["rgb"].permute(0, 3, 1, 2).shape[1:]
         num_image_obs = torch.prod(torch.tensor(input_image_shape)).item()
@@ -54,8 +58,10 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
         # num_events_obs = torch.prod(torch.tensor(input_events_shape)).item()
 
         # init the actor-critic networks
+        # evaluate the policy class
+        # policy_class = eval(self.policy_cfg.pop("class_name"))
         actor_critic: ActorCriticConv2d = ActorCriticConv2d(
-            num_obs,
+            num_prio_obs,
             num_critic_obs,
             self.env.num_actions,
             input_image_shape,
@@ -94,7 +100,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
         self.empirical_normalization = self.cfg["empirical_normalization"]
         if self.empirical_normalization:
             self.obs_normalizer = EmpiricalNormalization(
-                shape=[num_obs], until=1.0e8
+                shape=[num_prio_obs], until=1.0e8
             ).to(self.device)
             self.critic_obs_normalizer = EmpiricalNormalization(
                 shape=[num_critic_obs], until=1.0e8
@@ -112,7 +118,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
             self.training_type,
             self.env.num_envs,
             self.num_steps_per_env,
-            [num_obs + num_image_obs],
+            [num_prio_obs + num_image_obs],
             [num_critic_obs],
             [self.env.num_actions],
         )
@@ -173,8 +179,8 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
         critic_obs = extras["observations"]["critic"].to(self.device)
         image_obs = obs["rgb"].permute(0, 3, 1, 2).flatten(start_dim=1).to(self.device)
         # events_obs = obs["events"].flatten(start_dim=1)
-        prop_obs = obs["last_act"].to(self.device)
-        actor_obs = torch.cat([prop_obs, image_obs], dim=1)  # obs["imu"]
+        prop_obs = obs["last_act"].to(self.device)  # obs["imu"]
+        actor_obs = torch.cat([prop_obs, image_obs], dim=1)
         # critic_obs = torch.cat([critic_obs], dim=1)
         # actor_obs, critic_obs = actor_obs.to(self.device), critic_obs.to(self.device)
 
