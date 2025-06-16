@@ -109,7 +109,7 @@ class OnPolicyRunnerRecurrentConv2d(OnPolicyRunner):
 
     def learn(self, num_learning_iterations: int, init_at_random_ep_len: bool = False):  # noqa: C901
         # initialize writer
-        if self.log_dir is not None and self.writer is None:
+        if self.log_dir is not None and self.writer is None and not self.disable_logs: # for other processes (rank 1- N).
             # Launch either Tensorboard or Neptune & Tensorboard summary writer(s), default: Tensorboard.
             self.logger_type = self.cfg.get("logger", "tensorboard")
             self.logger_type = self.logger_type.lower()
@@ -134,7 +134,6 @@ class OnPolicyRunnerRecurrentConv2d(OnPolicyRunner):
                 )
             elif self.logger_type == "tensorboard":
                 from torch.utils.tensorboard import SummaryWriter
-
                 self.writer = SummaryWriter(log_dir=self.log_dir, flush_secs=10)
             else:
                 raise ValueError(
@@ -303,7 +302,7 @@ class OnPolicyRunnerRecurrentConv2d(OnPolicyRunner):
             self.current_learning_iteration = it
 
             # Logging info and save checkpoint
-            if self.log_dir is not None:
+            if self.log_dir is not None and not self.disable_logs:
                 # Log information
                 self.log(locals())
                 # Save model
@@ -316,7 +315,7 @@ class OnPolicyRunnerRecurrentConv2d(OnPolicyRunner):
             ep_infos.clear()
 
             # Save code state
-            if it == start_iter:
+            if it == start_iter and not self.disable_logs:
                 # obtain all the diff files
                 git_file_paths = store_code_state(self.log_dir, self.git_status_repos)
                 # if possible store them to wandb
@@ -325,7 +324,7 @@ class OnPolicyRunnerRecurrentConv2d(OnPolicyRunner):
                         self.writer.save_file(path)
 
         # Save the final model after training
-        if self.log_dir is not None:
+        if self.log_dir is not None and not self.disable_logs:
             if not os.path.exists(os.path.join(self.log_dir, "models")):
                 os.makedirs(os.path.join(self.log_dir, "models"))
             self.save(
