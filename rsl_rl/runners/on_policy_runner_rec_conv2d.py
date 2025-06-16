@@ -15,15 +15,16 @@ import rsl_rl
 from rsl_rl.algorithms import PPO
 from rsl_rl.env import VecEnv
 from rsl_rl.modules import (
-    ActorCriticConv2d,
+    # ActorCriticConv2d,
     ActorCriticRecurrentConv2d,
+    # ActorCriticRecurrentConv2d,
     EmpiricalNormalization,
 )
 from rsl_rl.runners import OnPolicyRunner
 from rsl_rl.utils import store_code_state
 
 
-class OnPolicyRunnerConv2d(OnPolicyRunner):
+class OnPolicyRunnerRecurrentConv2d(OnPolicyRunner):
     """Custom on-policy runner for training and evaluation with convolutional actor-critic."""
 
     def __init__(self, env: VecEnv, train_cfg, log_dir=None, device="cpu"):
@@ -39,12 +40,8 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
 
         obs, extras = self.env.get_observations()
 
-        # num_obs = obs.shape[1]
-        # if "critic" in extras["observations"]:
-        #     num_critic_obs = extras["observations"]["critic"].shape[1]
-        # else:
-        #     num_critic_obs = num_obs
-        num_prio_obs = obs["last_act"].shape[1]  # proprioception , check dim right
+        # num_proprio_obs = obs["proprioception"].shape[1]
+        num_prio_obs = obs["last_act"].shape[1]
         if "critic" in extras["observations"]:
             num_critic_obs = extras["observations"]["critic"].shape[1]
         else:
@@ -53,14 +50,8 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
         input_image_shape = obs["rgb"].permute(0, 3, 1, 2).shape[1:]
         num_image_obs = torch.prod(torch.tensor(input_image_shape)).item()
 
-        #   [N, 2, H, W]
-        # input_events_shape = obs["events"].shape[1:]
-        # num_events_obs = torch.prod(torch.tensor(input_events_shape)).item()
-
         # init the actor-critic networks
-        # evaluate the policy class
-        policy_class = eval(self.policy_cfg.pop("class_name"))
-        actor_critic: ActorCriticConv2d | ActorCriticRecurrentConv2d = policy_class(
+        actor_critic: ActorCriticRecurrentConv2d = ActorCriticRecurrentConv2d(
             num_prio_obs,
             num_critic_obs,
             self.env.num_actions,
@@ -68,36 +59,16 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
             **self.policy_cfg,
         ).to(self.device)
 
-        # resolve dimension of rnd gated state
-        if "rnd_cfg" in self.alg_cfg and self.alg_cfg["rnd_cfg"] is not None:
-            # check if rnd gated state is present
-            rnd_state = extras["observations"].get("rnd_state")
-            if rnd_state is None:
-                raise ValueError(
-                    "Observations for the key 'rnd_state' not found in infos['observations']."
-                )
-            # get dimension of rnd gated state
-            num_rnd_state = rnd_state.shape[1]
-            # add rnd gated state to config
-            self.alg_cfg["rnd_cfg"]["num_states"] = num_rnd_state
-            # scale down the rnd weight with timestep (similar to how rewards are scaled down in legged_gym envs)
-            self.alg_cfg["rnd_cfg"]["weight"] *= env.unwrapped.step_dt
-
-        # if using symmetry then pass the environment config object
-        if "symmetry_cfg" in self.alg_cfg and self.alg_cfg["symmetry_cfg"] is not None:
-            # this is used by the symmetry function for handling different observation terms
-            self.alg_cfg["symmetry_cfg"]["_env"] = env
-
         # init the ppo algorithm
         alg_class = eval(self.alg_cfg.pop("class_name"))  # PPO
-        self.alg: PPO = alg_class(
-            actor_critic, device=self.device, **self.alg_cfg
-        )  # actor critic 2d for ppo
+        self.alg: PPO = alg_class(actor_critic, device=self.device, **self.alg_cfg)
 
         # store training configuration
         self.num_steps_per_env = self.cfg["num_steps_per_env"]
         self.save_interval = self.cfg["save_interval"]
         self.empirical_normalization = self.cfg["empirical_normalization"]
+
+        # Image is normalized manually
         if self.empirical_normalization:
             self.obs_normalizer = EmpiricalNormalization(
                 shape=[num_prio_obs], until=1.0e8
@@ -119,14 +90,14 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
             self.env.num_envs,
             self.num_steps_per_env,
             [num_prio_obs + num_image_obs],
-            [num_critic_obs],
+            [num_critic_obs + num_image_obs],
             [self.env.num_actions],
         )
 
         # Decide whether to disable logging
         # We only log from the process with rank 0 (main process)
         self.disable_logs = self.is_distributed and self.gpu_global_rank != 0
-        # Logging
+        # Log
         self.log_dir = log_dir
         self.writer = None
         self.tot_timesteps = 0
@@ -136,7 +107,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
 
     def learn(self, num_learning_iterations: int, init_at_random_ep_len: bool = False):  # noqa: C901
         # initialize writer
-        if self.log_dir is not None and self.writer is None and not self.disable_logs:
+        if self.log_dir is not None and self.writer is None:
             # Launch either Tensorboard or Neptune & Tensorboard summary writer(s), default: Tensorboard.
             self.logger_type = self.cfg.get("logger", "tensorboard")
             self.logger_type = self.logger_type.lower()
@@ -181,7 +152,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
         # events_obs = obs["events"].flatten(start_dim=1)
         prop_obs = obs["last_act"].to(self.device)  # obs["imu"]
         actor_obs = torch.cat([prop_obs, image_obs], dim=1)
-        # critic_obs = torch.cat([critic_obs], dim=1)
+        critic_obs = torch.cat([critic_obs,image_obs], dim=1)
         # actor_obs, critic_obs = actor_obs.to(self.device), critic_obs.to(self.device)
 
         self.train_mode()  # switch to train mode (for dropout for example)
@@ -227,6 +198,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
                     obs, rewards, dones, infos = self.env.step(
                         actions.to(self.env.device)
                     )
+
                     # prop_obs = obs["proprioception"]
                     prop_obs = obs["last_act"]  # proprioception
                     # events_obs = obs["events"].flatten(start_dim=1)
@@ -258,7 +230,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
                     # Concatenate image observations with proprioceptive observations
 
                     actor_obs = torch.cat([prop_obs, image_obs], dim=1)
-                    # critic_obs = torch.cat([critic_obs], dim=1)
+                    critic_obs = torch.cat([critic_obs, image_obs], dim=1)
 
                     # Process env step and store in buffer
                     self.alg.process_env_step(rewards, dones, infos)
@@ -312,6 +284,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
                 start = stop
                 self.alg.compute_returns(critic_obs)
 
+            # Update policy
             # Update policy
             # # Note: we keep arguments here since locals() loads them
             # (
