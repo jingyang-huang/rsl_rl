@@ -10,6 +10,7 @@ from .actor_critic_conv2d import ActorCriticConv2d
 from .actor_critic_recurrent import ActorCriticRecurrent
 from .actor_critic_recurrent_conv2d import ActorCriticRecurrentConv2d
 from .actor_critic_recurrent_embedding import ActorCriticRecurrentEmbeddings
+from .asym_actor_critic_recurrent_conv2d import AsymActorCriticRecurrentConv2d
 from .normalizer import EmpiricalNormalization
 from .rnd import RandomNetworkDistillation
 from .student_teacher import StudentTeacher
