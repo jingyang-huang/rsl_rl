@@ -48,7 +48,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
         else:
             num_critic_obs = num_prio_obs
         # Convert from [N, H, W, C] to [C, H, W]
-        input_image_shape = obs["rgb"].permute(0, 1, 4, 2, 3).shape[2:]
+        input_image_shape = obs["image"].permute(0, 1, 4, 2, 3).shape[2:]
         num_image_obs = torch.prod(torch.tensor(input_image_shape)).item()
 
         #   [N, 2, H, W]
@@ -184,12 +184,12 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
         obs, extras = self.env.get_observations()
         critic_obs = extras["observations"]["critic"].to(self.device)
         image_obs = (
-            obs["rgb"].permute(0, 1, 4, 2, 3).flatten(start_dim=1).to(self.device)
+            obs["image"].permute(0, 1, 4, 2, 3).flatten(start_dim=1).to(self.device)
         ) # [B , ]
         prop_obs = obs["proprioception"].flatten(start_dim=1).to(self.device)
         # batch_size = obs["proprioception"].shape[0]
         # history_length = obs["proprioception"].shape[1]
-        # input_image_shape = obs["rgb"].shape[2:]
+        # input_image_shape = obs["image"].shape[2:]
         # test_view_img_obs = image_obs.view(batch_size , history_length, *input_image_shape)
         # events_obs = obs["events"].flatten(start_dim=1)
         actor_obs = torch.cat([prop_obs, image_obs], dim=1)
@@ -244,7 +244,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
                     prop_obs = obs["proprioception"].flatten(start_dim=1).to(self.device) # proprioception
                     # events_obs = obs["events"].flatten(start_dim=1)
                     image_obs = (
-                        obs["rgb"].permute(0, 1, 4, 2, 3).flatten(start_dim=1).to(self.device)
+                        obs["image"].permute(0, 1, 4, 2, 3).flatten(start_dim=1).to(self.device)
                     )
                     # [N, C, H, W] -> [N, S*C*H*W]
         
