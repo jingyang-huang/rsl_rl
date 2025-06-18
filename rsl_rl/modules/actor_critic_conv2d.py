@@ -231,7 +231,7 @@ class ConvolutionalNetwork(nn.Module):
 
     def build_conv_net(self, conv_layers_params):
         layers = []
-        in_channels = self.image_input_shape[0]
+        in_channels = self.image_input_shape[0] # in_channels 由input决定
         for idx, params in enumerate(conv_layers_params[:-1]):
             layers.extend(
                 [
