@@ -44,14 +44,16 @@ class OnPolicyRunnerAsymRecurrentConv2d(OnPolicyRunner):
         batch_size = obs["proprioception"].shape[0]
         history_length = obs["proprioception"].shape[1]
         num_prio_obs = obs["proprioception"].shape[2]
-        assert 1 == history_length
+        assert history_length > 1
 
         if "critic" in extras["observations"]:
-            num_critic_obs = extras["observations"]["critic"].shape[1]
+            num_critic_obs = extras["observations"]["critic"].shape[2]  # multi obs
         else:
             num_critic_obs = num_prio_obs
         # Convert from [N, H, W, C] to [C, H, W]
-        input_image_shape = obs["rgb"].permute(0, 1, 4, 2, 3).shape[2:] # with history but not used
+        input_image_shape = (
+            obs["image"][:, 0, ...].permute(0, 3, 1, 2).shape[1:]  # get first frame in buffer
+        )  # with history but not used
         num_image_obs = torch.prod(torch.tensor(input_image_shape)).item()
 
         # init the actor-critic networks
@@ -60,6 +62,7 @@ class OnPolicyRunnerAsymRecurrentConv2d(OnPolicyRunner):
             num_critic_obs,
             self.env.num_actions,
             input_image_shape,
+            history_length,
             **self.policy_cfg,
         ).to(self.device)
 
@@ -99,7 +102,7 @@ class OnPolicyRunnerAsymRecurrentConv2d(OnPolicyRunner):
             self.env.num_envs,
             self.num_steps_per_env,
             [num_prio_obs + num_image_obs],
-            [num_critic_obs],
+            [history_length * num_critic_obs],
             [self.env.num_actions],
         )
 
@@ -159,15 +162,23 @@ class OnPolicyRunnerAsymRecurrentConv2d(OnPolicyRunner):
         # start learning
         obs, extras = self.env.get_observations()
         critic_obs = extras["observations"]["critic"].to(self.device)
-        # image_obs = obs["rgb"].permute(0, 3, 1, 2).flatten(start_dim=1).to(self.device)
+        # image_obs = obs["image"].permute(0, 3, 1, 2).flatten(start_dim=1).to(self.device)
         batch_size = obs["proprioception"].shape[0]
         history_length = obs["proprioception"].shape[1]
         num_prio_obs = obs["proprioception"].shape[2]
-        assert 1 == history_length
-        image_obs = obs["rgb"].permute(0, 1, 4, 2, 3).flatten(start_dim=1).to(self.device) # with history but not used
+        assert history_length > 1
+        image_obs = (
+            obs["image"][:, 0, ...]
+            .permute(0, 3, 1, 2)
+            .flatten(start_dim=1)
+            .to(self.device)
+        )  # with history but not used
         # events_obs = obs["events"].flatten(start_dim=1)
-        prop_obs = obs["proprioception"].flatten(start_dim=1).to(self.device)  # obs["imu"]
+        prop_obs = (
+            obs["proprioception"][:, 0, ...].flatten(start_dim=1).to(self.device)
+        )  # obs["imu"]
         actor_obs = torch.cat([prop_obs, image_obs], dim=1)
+        critic_obs = critic_obs.flatten(start_dim=1).to(self.device)
         # critic_obs = torch.cat([critic_obs, image_obs], dim=1)
         # actor_obs, critic_obs = actor_obs.to(self.device), critic_obs.to(self.device)
 
@@ -215,12 +226,22 @@ class OnPolicyRunnerAsymRecurrentConv2d(OnPolicyRunner):
                         actions.to(self.env.device)
                     )
 
+
                     batch_size = obs["proprioception"].shape[0]
                     history_length = obs["proprioception"].shape[1]
                     num_prio_obs = obs["proprioception"].shape[2]
-                    assert 1 == history_length
-                    prop_obs = obs["proprioception"].flatten(start_dim=1).to(self.device)  # obs["imu"]
-                    image_obs = obs["rgb"].permute(0, 1, 4, 2, 3).flatten(start_dim=1).to(self.device) # with history but not used
+                    assert history_length > 1
+                    image_obs = (
+                        obs["image"][:, 0, ...]
+                        .permute(0, 3, 1, 2)
+                        .flatten(start_dim=1)
+                        .to(self.device)
+                    )  # with history but not used
+                    # events_obs = obs["events"].flatten(start_dim=1)
+                    prop_obs = (
+                        obs["proprioception"][:, 0, ...].flatten(start_dim=1).to(self.device)
+                    )  # obs["imu"]
+
                     # Move to the agent device
                     prop_obs, rewards, dones = (
                         prop_obs.to(self.device),
@@ -241,6 +262,7 @@ class OnPolicyRunnerAsymRecurrentConv2d(OnPolicyRunner):
                     # Concatenate image observations with proprioceptive observations
 
                     actor_obs = torch.cat([prop_obs, image_obs], dim=1)
+                    critic_obs = critic_obs.flatten(start_dim=1).to(self.device)
                     # critic_obs = torch.cat([critic_obs, image_obs], dim=1)
 
                     # Process env step and store in buffer

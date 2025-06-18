@@ -19,6 +19,7 @@ class AsymActorCriticRecurrentConv2d(nn.Module):
         num_critic_obs,
         num_actions,
         image_input_shape,
+        history_length,
         conv_layers_params,
         conv_linear_output_size,
         actor_hidden_dims,
@@ -60,8 +61,9 @@ class AsymActorCriticRecurrentConv2d(nn.Module):
         # )
 
         # Value function
+        critic_obs_size =  history_length * num_critic_obs
         critic_layers = []
-        critic_layers.append(nn.Linear(num_critic_obs, critic_hidden_dims[0]))
+        critic_layers.append(nn.Linear(critic_obs_size, critic_hidden_dims[0]))
         critic_layers.append(self.activation_fn)
         for layer_index in range(len(critic_hidden_dims)):
             if layer_index == len(critic_hidden_dims) - 1:
@@ -123,7 +125,7 @@ class AsymActorCriticRecurrentConv2d(nn.Module):
 
     def evaluate(self, critic_observations, masks=None, hidden_states=None):
         # critic_obs: [512, 30055]
-        value = self.critic(critic_observations).unsqueeze(1)
+        value = self.critic(critic_observations)
         return value
     
     def get_hidden_states(self):
