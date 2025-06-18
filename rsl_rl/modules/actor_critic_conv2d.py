@@ -55,9 +55,10 @@ class ActorCriticConv2d(nn.Module):
         #     conv_linear_output_size=conv_linear_output_size,
         # )
 
+        critic_obs_size =  history_length * num_critic_obs
         # Value function
         critic_layers = []
-        critic_layers.append(nn.Linear(num_critic_obs, critic_hidden_dims[0]))
+        critic_layers.append(nn.Linear(critic_obs_size, critic_hidden_dims[0]))
         critic_layers.append(self.activation_fn)
         for layer_index in range(len(critic_hidden_dims)):
             if layer_index == len(critic_hidden_dims) - 1:

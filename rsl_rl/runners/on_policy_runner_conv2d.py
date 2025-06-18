@@ -44,7 +44,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
         history_length = obs["proprioception"].shape[1]
         num_prio_obs = obs["proprioception"].shape[2]
         if "critic" in extras["observations"]:
-            num_critic_obs = extras["observations"]["critic"].shape[1]
+            num_critic_obs = extras["observations"]["critic"].shape[2]
         else:
             num_critic_obs = num_prio_obs
         # Convert from [N, H, W, C] to [C, H, W]
@@ -123,7 +123,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
             self.env.num_envs,
             self.num_steps_per_env,
             [history_length * (num_prio_obs + num_image_obs)],
-            [num_critic_obs],
+            [history_length * num_critic_obs],
             [self.env.num_actions],
         )
 
@@ -193,6 +193,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
         # test_view_img_obs = image_obs.view(batch_size , history_length, *input_image_shape)
         # events_obs = obs["events"].flatten(start_dim=1)
         actor_obs = torch.cat([prop_obs, image_obs], dim=1)
+        critic_obs = critic_obs.flatten(start_dim=1).to(self.device)
         # critic_obs = torch.cat([critic_obs,image_obs], dim=1)
         # actor_obs, critic_obs = actor_obs.to(self.device), critic_obs.to(self.device)
 
@@ -268,6 +269,7 @@ class OnPolicyRunnerConv2d(OnPolicyRunner):
                     # Concatenate image observations with proprioceptive observations
 
                     actor_obs = torch.cat([prop_obs, image_obs], dim=1)
+                    critic_obs = critic_obs.flatten(start_dim=1).to(self.device)
                     # critic_obs = torch.cat([critic_obs, image_obs], dim=1)
 
                     # Process env step and store in buffer
