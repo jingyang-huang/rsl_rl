@@ -59,24 +59,30 @@ class AsymActorCriticRecurrentConv2d(nn.Module):
         #     rnn_hidden_size=rnn_hidden_size,
         #     rnn_num_layers=rnn_num_layers
         # )
+        self.critic = MlpMaksed(
+            input_dim=history_length * num_critic_obs,
+            output_dim=1,
+            hidden_dims=critic_hidden_dims,
+            activation_fn=self.activation_fn,
+        )
 
         # Value function
-        critic_obs_size =  history_length * num_critic_obs
-        critic_layers = []
-        critic_layers.append(nn.Linear(critic_obs_size, critic_hidden_dims[0]))
-        critic_layers.append(self.activation_fn)
-        for layer_index in range(len(critic_hidden_dims)):
-            if layer_index == len(critic_hidden_dims) - 1:
-                critic_layers.append(nn.Linear(critic_hidden_dims[layer_index], 1))
-            else:
-                critic_layers.append(
-                    nn.Linear(
-                        critic_hidden_dims[layer_index],
-                        critic_hidden_dims[layer_index + 1],
-                    )
-                )
-                critic_layers.append(self.activation_fn)
-        self.critic = nn.Sequential(*critic_layers)
+        # critic_obs_size =  history_length * num_critic_obs
+        # critic_layers = []
+        # critic_layers.append(nn.Linear(critic_obs_size, critic_hidden_dims[0]))
+        # critic_layers.append(self.activation_fn)
+        # for layer_index in range(len(critic_hidden_dims)):
+        #     if layer_index == len(critic_hidden_dims) - 1:
+        #         critic_layers.append(nn.Linear(critic_hidden_dims[layer_index], 1))
+        #     else:
+        #         critic_layers.append(
+        #             nn.Linear(
+        #                 critic_hidden_dims[layer_index],
+        #                 critic_hidden_dims[layer_index + 1],
+        #             )
+        #         )
+        #         critic_layers.append(self.activation_fn)
+        # self.critic = nn.Sequential(*critic_layers)
 
         print(f"Modified Actor Network: {self.actor}")
         print(f"Modified Critic Network: {self.critic}")
@@ -125,13 +131,45 @@ class AsymActorCriticRecurrentConv2d(nn.Module):
 
     def evaluate(self, critic_observations, masks=None, hidden_states=None):
         # critic_obs: [512, 30055]
-        value = self.critic(critic_observations)
+        value = self.critic(critic_observations, masks=masks)
         return value
     
     def get_hidden_states(self):
         return self.actor.hidden_states, self.actor.hidden_states
     
 
+class MlpMaksed(nn.Module):
+    def __init__(self, input_dim, output_dim, hidden_dims, activation_fn):
+        super().__init__()
+
+        layers = []
+        layers.append(nn.Linear(input_dim, hidden_dims[0]))
+        layers.append(activation_fn)
+        for layer_index in range(len(hidden_dims)):
+            if layer_index == len(hidden_dims) - 1:
+                layers.append(nn.Linear(hidden_dims[layer_index], 1))
+            else:
+                layers.append(
+                    nn.Linear(
+                        hidden_dims[layer_index],
+                        hidden_dims[layer_index + 1],
+                    )
+                )
+                layers.append(activation_fn)
+        self.mlp = nn.Sequential(*layers)
+    
+    def forward(self, observations, masks=None, hidden_states=None):
+        batch_mode = masks is not None
+        
+        # Pass through LSTM
+        if batch_mode:
+            masked_observations = unpad_trajectories(observations, masks)
+            output = self.mlp(masked_observations)
+        else:
+            # inference mode (collection): use hidden states of last step
+            output = self.mlp(observations)
+        
+        return output
 
 class ConvolutionalNetwork(nn.Module):
     def __init__(
