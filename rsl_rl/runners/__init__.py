@@ -8,8 +8,9 @@
 from .on_policy_runner import OnPolicyRunner
 from .on_policy_runner_asym_rec_conv2d import OnPolicyRunnerAsymRecurrentConv2d
 from .on_policy_runner_conv2d import OnPolicyRunnerConv2d
+from .on_policy_runner_multi import OnPolicyRunnerMulti
 from .on_policy_runner_rec_conv2d import OnPolicyRunnerRecurrentConv2d
 from .on_policy_runner_rec_embd import OnPolicyRunnerRecurrentEmbeddings
 
 # __all__ = ["OnPolicyRunner", "OnPolicyRunnerConv2d"]
-__all__ = ["OnPolicyRunner", "OnPolicyRunnerConv2d", "OnPolicyRunnerRecurrentConv2d", "OnPolicyRunnerAsymRecurrentConv2d" "OnPolicyRunnerRecurrentEmbeddings"]
+__all__ = ["OnPolicyRunner", "OnPolicyRunnerConv2d", "OnPolicyRunnerMulti","OnPolicyRunnerRecurrentConv2d", "OnPolicyRunnerAsymRecurrentConv2d" "OnPolicyRunnerRecurrentEmbeddings"]
