@@ -12,7 +12,7 @@ from collections import deque
 import torch
 
 import rsl_rl
-from rsl_rl.algorithms import PPO
+from rsl_rl.algorithms import PPO, PPO_multi
 from rsl_rl.env import VecEnv
 from rsl_rl.modules import (
     ActorCriticMulti,
@@ -91,7 +91,7 @@ class OnPolicyRunnerMulti(OnPolicyRunner):
 
         # initialize algorithm
         alg_class = eval(self.alg_cfg.pop("class_name"))
-        self.alg: PPO = alg_class(
+        self.alg: PPO_multi = alg_class(
             actor_critic,
             device=self.device,
             **self.alg_cfg,

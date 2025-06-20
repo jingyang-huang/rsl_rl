@@ -136,6 +136,14 @@ class ActorCriticMulti(nn.Module):
         actions_mean = self.actor(observations)
         return actions_mean
 
+    def predict_ball_3d_position(self, catch_actor_observations, **kwargs):
+        """Predict the 3D position of the ball based on the catch actor observations."""
+        # Update the catch actor distribution
+        self.catch_actor.update_distribution(catch_actor_observations)
+        # Sample from the distribution to get the predicted position
+        predicted_position = self.catch_actor.distribution.sample()
+        return predicted_position
+    
     def evaluate(self, critic_observations, **kwargs):
         value = self.critic(critic_observations)
         return value
